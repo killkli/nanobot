@@ -232,7 +232,7 @@ tmux -S "$SOCKET" send-keys -t agent-1 "claude --dangerously-skip-permissions 'F
 
 | 檔案 | 說明 | 載入方式 |
 |------|------|---------|
-| `memory/MEMORY.md` | 長期事實：偏好設定、專案背景、人際關係 | 永遠載入到上下文 |
+| `memory/MEMORY.md` | 長期事實：偏好設定、專案背景、人際關係 | 以 bounded core memory 形式注入；不再全文載入 |
 | `memory/HISTORY.md` | 追加式事件日誌，每筆以 `[YYYY-MM-DD HH:MM]` 開頭 | 按需搜尋，不自動載入 |
 
 #### 更新 MEMORY.md

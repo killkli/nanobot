@@ -266,6 +266,9 @@ hide:
     nanobot chat
     ```
 
+!!! tip "想先搞懂記憶功能？"
+    建議先看 [記憶功能入門](getting-started/memory.md)，了解預設行為、啟用 mem0 的時機與設定方式。
+
 ---
 
 ## 架構概覽

@@ -1,530 +1,383 @@
-# Nanobot Memory System — 開發者文件
+# Nanobot 記憶系統開發者文件
 
-> 適用版本：目前 `main` 分支
-> 核心檔案：`nanobot/agent/memory.py`、`nanobot/agent/context.py`、`nanobot/session/manager.py`
+> 適用分支: `main`
+> 主要程式: `nanobot/agent/memory.py`、`nanobot/agent/context.py`、`nanobot/config/schema.py`
 
----
+## 1. 概覽與改版動機
 
-## 1. 系統概覽
+Nanobot 的記憶系統要同時解兩件事:
 
-Nanobot 的記憶系統解決一個核心矛盾：**LLM 的 context window 有限，但對話可以無限延伸**。
+1. 對話可以很長
+2. 每次 LLM 呼叫的 prompt 空間有限
 
-解法是「雙層記憶 + 游標整合」：
+這次改版的重點是把「常駐記憶注入」和「可選檢索記憶」拆開，避免長期把整份 `MEMORY.md` 無上限塞進 system prompt。
 
+### 本版核心結論
+
+- `MEMORY.md` 不再全文注入
+- 核心記憶注入受 `max_core_chars` 限制
+- mem0 檢索與索引是可選功能，且預設關閉
+- 相關記憶來自 `mem0.search(query=..., user_id=..., limit=...)`
+- token 估算探針 `[token-probe]` 不會觸發即時 mem0 檢索
+- `HISTORY.md` 仍是 append-only 的歷史稽核軌跡
+- consolidation 仍寫入 `HISTORY.md` 與 `MEMORY.md`
+- 啟用 mem0 時，`history_entry` 會索引，`memory_update` 只有內容變更時才會以有上限摘錄索引
+
+## 2. 舊架構與新架構對照
+
+| 面向 | 舊行為 | 新行為 |
+| --- | --- | --- |
+| `MEMORY.md` 注入 | 全文注入 | 以 `max_core_chars` 截斷後注入 |
+| 相關記憶來源 | 無明確可選檢索層 | 可選 mem0 檢索，預設關閉 |
+| 相關記憶觸發 | 不適用 | `get_memory_context(query, include_relevant=True)` 時，才會走 mem0 |
+| token probe 行為 | 可能觸發一般注入流程 | `[token-probe]` 明確關閉 relevant memory 查詢 |
+| consolidation 檔案寫入 | `HISTORY.md` append、`MEMORY.md` 覆寫 | 行為維持一致 |
+| consolidation 後索引 | 無 | 啟用 mem0 時 best-effort 索引 |
+
+### 為什麼要改
+
+舊模式長期把大體積記憶直接放入 prompt，會讓每輪對話的固定成本變高。新模式改為:
+
+- 固定注入只保留 bounded core memory
+- 額外相關資訊改成按 query 查詢
+- 估算 token 時避免做即時檢索，減少不必要成本
+
+## 3. 核心元件與職責
+
+### 3.1 `MemoryStore` (`nanobot/agent/memory.py`)
+
+職責:
+
+- 管理 `memory/MEMORY.md` 與 `memory/HISTORY.md`
+- 提供記憶讀取組裝 (`get_memory_context`)
+- 執行 consolidation 寫入
+- 在可用時對接 mem0 (`from_config` / `search` / `add`)
+
+檔案語義:
+
+- `MEMORY.md`: 長期結構化記憶，consolidation 成功時可能被全量更新
+- `HISTORY.md`: append-only 歷史日誌，不修改舊條目
+
+### 3.2 `ContextBuilder` (`nanobot/agent/context.py`)
+
+職責:
+
+- `build_system_prompt(...)` 內呼叫 `MemoryStore.get_memory_context(...)`
+- `build_messages(...)` 會把 `current_message` 當作 `memory_query`
+- 遇到 `[token-probe]` 時，將 `include_relevant_memory=False`
+
+### 3.3 `MemoryConsolidator` (`nanobot/agent/memory.py`)
+
+職責:
+
+- token 感知式整合策略
+- 以 per-session lock 避免同一 session 的整合競態
+- 成功整合後更新 `session.last_consolidated` 並持久化
+
+### 3.4 `AgentMemoryConfig` (`nanobot/config/schema.py`)
+
+職責:
+
+- 定義記憶模式開關與上限值
+- 提供安全預設值，尤其是 mem0 預設關閉
+
+## 4. 讀取路徑: Prompt 組裝
+
+讀取路徑由 `ContextBuilder.build_messages(...)` 觸發。
+
+### 4.1 流程圖
+
+```text
+build_messages(history, current_message, ...)
+  -> is_token_probe = (current_message == "[token-probe]")
+  -> build_system_prompt(memory_query=current_message,
+                         include_relevant_memory=not is_token_probe)
+      -> memory.get_memory_context(query, include_relevant)
+          -> _build_core_memory_context()
+              -> read MEMORY.md
+              -> _truncate_for_prompt(max_core_chars)
+          -> (optional) _build_mem0_context(query)
+              -> mem0.search(query, user_id, limit)
+  -> 組出 system + history + current message
 ```
-對話歷史（短期）                      記憶檔案（長期）
-session.messages[]                    workspace/memory/
-  [0] user: ...                         MEMORY.md  ← 結構化事實，LLM 覆寫
-  [1] assistant: ...                    HISTORY.md ← 時間戳日誌，Append-only
-  [2] user: ...
-  ── last_consolidated = 3 ──
-  [3] user: ...   ← 未整合，送給 LLM
-  [4] assistant: ...
-  [5] user: ...（當前）
-```
 
----
+### 4.2 Core memory 注入規則 (always-on)
 
-## 2. 核心元件
+`_build_core_memory_context()` 會:
 
-### 2.1 MemoryStore（`memory.py:75`）
+1. 讀 `MEMORY.md`
+2. 套用 `_truncate_for_prompt(text, max_core_chars)`
+3. 若超過上限，加上 `"[... truncated ...]"`
 
-底層 I/O 層，管理兩個檔案：
+這代表核心記憶注入永遠有上限，不再是全文注入。
 
-| 檔案 | 格式 | 寫入方式 | 用途 |
-|------|------|----------|------|
-| `MEMORY.md` | Markdown | LLM 全量覆寫 | 長期結構化事實（偏好、背景、關係等） |
-| `HISTORY.md` | 純文字 | Append-only | 時間戳事件日誌，支援 grep 搜尋 |
+### 4.3 Relevant memory 注入規則 (optional)
 
-**關鍵方法：**
+`_build_mem0_context(query)` 只會在以下條件同時成立時執行:
+
+- `memory.enabled == true`
+- query 非空
+- mem0 client 初始化成功
+
+查詢介面:
 
 ```python
-MemoryStore.consolidate(messages, provider, model) -> bool
-```
-
-整合流程：
-1. 讀取當前完整 `MEMORY.md`
-2. 組合 prompt：`current_memory + formatted_messages`
-3. 以 `forced tool_choice = save_memory` 呼叫 LLM
-4. LLM 返回 `history_entry`（時間戳摘要）+ `memory_update`（完整 MEMORY.md）
-5. `history_entry` → append 到 `HISTORY.md`
-6. `memory_update` → 若與現有內容不同則覆寫 `MEMORY.md`
-
-**降級機制（`_fail_or_raw_archive`）：**
-
-```
-LLM 整合失敗次數 < 3  →  返回 False（保留 chunk，下輪重試）
-LLM 整合失敗次數 >= 3 →  _raw_archive()：直接 dump 原始訊息到 HISTORY.md
-                          重置計數器，返回 True
-```
-
-### 2.2 MemoryConsolidator（`memory.py:222`）
-
-上層策略層，管理「何時整合、整合哪些、如何鎖定」。
-
-**建構函數依賴：**
-
-```python
-MemoryConsolidator(
-    workspace,
-    provider,               # LLMProvider：執行整合 LLM 呼叫
-    model,                  # 整合使用的模型
-    sessions,               # SessionManager：持久化游標
-    context_window_tokens,  # 模型 context window 大小（預設 65,536）
-    build_messages,         # ContextBuilder.build_messages（用於 token 估算）
-    get_tool_definitions,   # ToolRegistry.get_definitions（用於 token 估算）
+client.search(
+    query=query,
+    user_id=self._mem0_user_id,
+    limit=self.config.max_mem0_results,
 )
 ```
 
-**並發鎖（`get_lock`）：**
+結果處理重點:
+
+- 最多取 `max_mem0_results`
+- 總字元受 `max_mem0_chars` 限制
+- 每筆結果會轉字串後再裁切
+- 無結果或失敗則不注入 relevant 區塊
+
+### 4.4 token probe 特殊行為
+
+`build_messages(...)` 在 `current_message == "[token-probe]"` 時，會將 `include_relevant_memory=False`。
+
+效果:
+
+- token 估算路徑不會觸發 live mem0 retrieval
+- 估算更穩定，且不額外依賴檢索可用性
+
+## 5. 寫入路徑: Consolidation、持久化、索引
+
+### 5.1 consolidation 成功路徑
+
+`MemoryStore.consolidate(messages, provider, model)` 會:
+
+1. 讀取目前 `MEMORY.md`
+2. 用 `save_memory` 工具呼叫 LLM，要求回傳:
+   - `history_entry`
+   - `memory_update`
+3. `history_entry` append 到 `HISTORY.md`
+4. 若 `memory_update != current_memory`，覆寫 `MEMORY.md`
+
+所以檔案語義維持既有模式:
+
+- `HISTORY.md` 一律 append-only
+- `MEMORY.md` 依 consolidation 結果更新
+
+### 5.2 consolidation 後 mem0 索引 (optional, best-effort)
+
+只有在 `memory.enabled == true` 且 mem0 client 可用時才執行。
+
+索引規則:
+
+- `history_entry`: 每次成功 consolidation 都會嘗試 `client.add(...)`
+- `memory_update`: 只有內容變更時才嘗試索引
+- 索引 `memory_update` 時，不送全文，只送 `max_mem0_index_chars` 上限摘錄
+
+對應 `add` 呼叫:
 
 ```python
-self._locks: weakref.WeakValueDictionary[str, asyncio.Lock]
+client.add(history_entry, user_id=..., metadata={"source": "history_entry"})
+client.add(memory_update_excerpt, user_id=..., metadata={"source": "memory_update_excerpt"})
 ```
 
-使用 `WeakValueDictionary` 管理 per-session `asyncio.Lock`：
-- 同一 session 的並發整合請求會序列化
-- 無對話的 session 的鎖自動被 GC 回收，不洩漏記憶體
+## 6. Token 估算與整合行為
 
-### 2.3 Session 游標（`session/manager.py:17`）
+### 6.1 估算入口
 
-```python
-@dataclass
-class Session:
-    messages: list[dict]  # Append-only，永不縮減
-    last_consolidated: int = 0  # 已整合到檔案的訊息索引
+`MemoryConsolidator.estimate_session_prompt_tokens(session)` 會:
+
+1. 取未整合 history
+2. 呼叫 `build_messages(..., current_message="[token-probe]")`
+3. 交給 `estimate_prompt_tokens_chain(...)` 估算
+
+重點是第 2 步會帶入 token probe，所以 relevant memory 檢索在估算時被關閉。
+
+### 6.2 觸發與目標
+
+`maybe_consolidate_by_tokens(session)` 行為:
+
+- `context_window_tokens <= 0` 或無訊息時直接跳過
+- 估算值 `< context_window_tokens` 時不整合
+- 估算值 `>= context_window_tokens` 時進入整合迴圈
+- 目標是降到 `context_window_tokens // 2`
+- 最多跑 5 輪
+
+### 6.3 邊界選取
+
+`pick_consolidation_boundary(...)` 只在 user 訊息邊界切段，避免切壞多訊息配對語義。找不到安全邊界就停止本輪整合。
+
+### 6.4 鎖與持久化
+
+- 同一 session 使用共享 lock 序列化整合
+- 每輪成功後更新 `last_consolidated`
+- 呼叫 `sessions.save(session)` 寫回持久層
+
+## 7. 設定參考與預設值
+
+設定位置:
+
+```text
+agents.defaults.memory
 ```
 
-**設計原則：`messages` 只增不減**
+### 7.1 記憶相關設定
 
-這保留了 LLM prompt caching 的效率——相同前綴的 token 序列可被快取。整合後只移動 `last_consolidated` 指針，`get_history()` 回傳 `messages[last_consolidated:]`。
+| 欄位 | 型別 | 預設值 | 說明 |
+| --- | --- | --- | --- |
+| `enabled` | `bool` | `false` | 是否啟用 mem0 檢索與索引 |
+| `max_core_chars` | `int` | `4000` | `MEMORY.md` 注入 prompt 的字元上限 |
+| `max_mem0_results` | `int` | `4` | 單次 relevant memory 最多結果數 |
+| `max_mem0_chars` | `int` | `2000` | 單次 relevant memory 總字元上限 |
+| `max_mem0_index_chars` | `int` | `800` | `memory_update` 索引摘錄上限 |
+| `mem0_config` | `dict[str, object]` | `{}` | 傳給 `Memory.from_config(...)` |
 
----
+### 7.2 相關全域設定
 
-## 3. Token 感知整合流程
+| 欄位 | 預設值 | 說明 |
+| --- | --- | --- |
+| `agents.defaults.context_window_tokens` | `65536` | token 感知 consolidation 觸發上限 |
+| `agents.defaults.memory_window` | `null` | 已棄用，相容舊設定，執行期忽略 |
 
-### 3.1 觸發條件
+> `schema.py` 採用 alias generator，設定可接受 snake_case 與 camelCase。
 
-```
-maybe_consolidate_by_tokens(session)
-  ├─ context_window_tokens <= 0 → 跳過（功能已停用）
-  ├─ estimated < context_window_tokens → 空閒，不整合
-  └─ estimated >= context_window_tokens → 進入整合循環
-```
+### 7.3 可直接複製的 `config.json` 範例（啟用 mem0）
 
-**目標**：將 prompt 壓縮至 `context_window_tokens // 2`（50%）以下，留出後續對話空間。
+如果你想先看使用者角度的設定與啟用方式，請先讀 [記憶功能入門](./getting-started/memory.md)。
 
-**最多執行 5 輪**（`_MAX_CONSOLIDATION_ROUNDS = 5`）。
+以下範例可直接合併到 `~/.nanobot/config.json`，路徑是 `agents.defaults.memory`。
 
-### 3.2 Token 估算方式
-
-```python
-estimate_session_prompt_tokens(session):
-  1. history = session.get_history(max_messages=0)  # 全部未整合訊息
-  2. probe = build_messages(history, "[token-probe]", ...)
-     # 包含完整 system prompt（MEMORY.md 在內）+ 對話歷史 + runtime ctx
-  3. estimate_prompt_tokens_chain(provider, model, probe, tool_definitions)
-     # 優先 provider 原生 API → tiktoken cl100k_base → len // 4
-```
-
-估算會計入 **system prompt 的完整內容**，包括 `MEMORY.md`。
-
-### 3.3 整合邊界選取
-
-```python
-pick_consolidation_boundary(session, tokens_to_remove):
-  - 從 last_consolidated 開始掃描
-  - 只在 role == "user" 處設置邊界（保護 tool_call/tool_result 配對）
-  - 累加 token 數，找到足以移除 tokens_to_remove 的最小安全位置
-  - 返回 (boundary_idx, removed_tokens)
-```
-
-### 3.4 整合執行序列
-
-```
-session.messages[last_consolidated:end_idx]  ← chunk
-         ↓
-MemoryStore.consolidate(chunk)
-         ↓ 成功
-session.last_consolidated = end_idx
-sessions.save(session)          ← 持久化游標
-         ↓
-重新估算 token，繼續下一輪
-```
-
----
-
-## 4. 記憶讀取路徑（注入 System Prompt）
-
-每次 LLM 呼叫都重建 system prompt，組成如下：
-
-```
-build_system_prompt()
-  1. 核心身份（OS / workspace / 行為準則）
-  2. Bootstrap 文件（AGENTS.md, SOUL.md, USER.md, TOOLS.md）
-  3. ← get_memory_context() → "## Long-term Memory\n{MEMORY.md 全文}"
-  4. Always-on 技能內容（always=true 的 SKILL.md）
-  5. 技能目錄摘要
-```
-
-**MEMORY.md 的全文被無條件注入每一次 LLM 呼叫的 system prompt，沒有大小限制。**
-
----
-
-## 5. 整合觸發時機（`loop.py`）
-
-| 觸發點 | 時機 | 執行模式 |
-|--------|------|----------|
-| L.370 | 系統訊息處理前 | 前景（同步等待） |
-| L.383 | 系統訊息處理後 | 背景（非阻塞） |
-| **L.417** | **主訊息 LLM 呼叫前** | **前景（同步等待）← 最關鍵** |
-| L.449 | 主訊息回覆後 | 背景（非阻塞） |
-| L.402 | `/new` 指令清除 session | 背景（強制歸檔快照） |
-
----
-
-## 6. 完整資料流圖
-
-```
-InboundMessage
-  │
-  ▼
-AgentLoop._process_message()
-  │
-  ├─ [前景] maybe_consolidate_by_tokens(session)
-  │     ├─ 估算 token（含 MEMORY.md）
-  │     ├─ 若 >= context_window → pick_boundary → consolidate → 更新游標
-  │     └─ 最多 5 輪
-  │
-  ├─ context.build_messages(session.get_history(), ...)
-  │     └─ build_system_prompt()
-  │           └─ MemoryStore.get_memory_context() → 讀取 MEMORY.md
-  │
-  ├─ provider.chat_with_retry(messages)   ← LLM 呼叫
-  │
-  ├─ _save_turn(session, new_messages)    ← 寫入 session.messages
-  ├─ sessions.save(session)
-  │
-  └─ [背景] maybe_consolidate_by_tokens(session)
-```
-
----
-
-## 7. 設定選項
-
-| 設定欄位 | 型別 | 預設值 | 說明 |
-|----------|------|--------|------|
-| `context_window_tokens` | `int` | `65536` | 觸發整合的 token 上限 |
-| `memory_window` | `int` | — | **已棄用**，保留向後相容 |
-
-整合使用的 model 與 provider 繼承自 agent 主設定（`AgentDefaults.model`）。
-
----
-
-## 8. MEMORY.md 膨脹問題分析
-
-> ⚠️ **結論：存在可導致對話完全失效的膨脹風險，且系統缺乏自動緩解機制。**
-
-### 8.1 膨脹的根本原因
-
-整合 prompt 的設計直接導致 `MEMORY.md` 只增不減：
-
-```python
-# memory.py:38（_SAVE_MEMORY_TOOL 定義）
-"memory_update": {
-    "description": "Full updated long-term memory as markdown. "
-                   "Include all existing facts plus new ones. "  # ← 明確要求保留舊內容
-                   "Return unchanged if nothing new.",
+```json
+{
+  "agents": {
+    "defaults": {
+      "memory": {
+        "enabled": true,
+        "maxCoreChars": 4000,
+        "maxMem0Results": 4,
+        "maxMem0Chars": 2000,
+        "maxMem0IndexChars": 800,
+        "mem0Config": {
+          "llm": {
+            "provider": "openai",
+            "config": {
+              "openai_base_url": "http://localhost:8317/v1",
+              "model": "claude-haiku-4-5"
+            }
+          },
+          "embedder": {
+            "provider": "gemini",
+            "config": {
+              "model": "gemini-embedding-2-preview",
+              "embedding_dims": 1536
+            }
+          }
+        }
+      }
+    }
+  }
 }
 ```
 
-每次整合，LLM 被要求把「現有所有事實 + 新事實」全部寫回 `MEMORY.md`。這是設計上的 **累積語義（accumulation semantics）**，沒有任何自動刪減邏輯。
+!!! note "mem0 是選用功能"
+    `enabled` 預設是 `false`，不開啟也能正常使用核心記憶。
 
-### 8.2 膨脹的惡性循環
+!!! tip "不使用 mem0 時"
+    即使 `mem0Config` 保持空物件或不設定，`MEMORY.md` 的 core memory 注入與 consolidation 仍會照常運作。
 
-```
-對話產生新事實
-    │
-    ▼
-consolidate() 呼叫 LLM：
-  prompt = current_memory（N tokens）+ chunk（M tokens）
-    │
-    ▼
-LLM 返回 memory_update：
-  = current_memory（N tokens）+ 新增事實（ΔN tokens）
-    │
-    ▼
-MEMORY.md 大小 = N + ΔN  ← 只會增長
-    │
-    ▼
-下次 build_system_prompt() 注入 N+ΔN tokens
-下次 consolidate() prompt 包含 N+ΔN tokens（比這次更大）
-```
+## 8. 降級與失敗處理
 
-### 8.3 三個失效場景
+### 8.1 mem0 相關失敗
 
-#### 場景一：慢性劣化
+- mem0 模組不存在、初始化失敗、`search/add` 失敗
+- 行為: 記錄 warning/exception，流程不中斷
+- 結果: 只退化成 core-memory-only，主對話仍可運作
 
-長期使用者的 `MEMORY.md` 逐漸膨脹至數千 token。每次對話的基礎 token 消耗持續上升，可用的對話歷史空間隨之縮小。
-**症狀**：整合越來越頻繁，系統需要更多時間在對話前等待整合完成。
+### 8.2 consolidation 相關失敗
 
-#### 場景二：整合加速膨脹
+失敗來源例如:
 
-整合本身的 prompt 把完整 `MEMORY.md` 傳給 LLM：
+- LLM 沒有呼叫 `save_memory`
+- tool payload 格式不符或欄位缺失
+- provider/tool 呼叫例外
 
-```python
-# memory.py:125
-prompt = f"""...
-## Current Long-term Memory
-{current_memory or "(empty)"}     ← 整個 MEMORY.md
+處理邏輯:
 
-## Conversation to Process
-{self._format_messages(messages)}"""
-```
+1. `_consecutive_failures += 1`
+2. 未達 3 次，回傳 `False`，等待下次重試
+3. 連續達 3 次，執行 `_raw_archive(messages)`
+4. `_raw_archive` 會把原始訊息以 `[RAW]` 條目 append 到 `HISTORY.md`
+5. 重置失敗計數，回傳 `True`
 
-當 `MEMORY.md` 已有 20,000 tokens，每次整合 LLM 呼叫的 input 就已有 20,000+ tokens，**整合操作本身消耗的 context 遠超過它試圖釋放的空間**。
+### 8.3 tool_choice 相容路徑
 
-#### 場景三：完全失效（最嚴重）
+當 forced `tool_choice` 被 provider 拒絕時，會自動改用 `tool_choice="auto"` 再試一次。
 
-假設 `context_window_tokens = 65,536`：
+## 9. 營運說明、 rollout、相容性
 
-```
-MEMORY.md 大小 = 40,000 tokens
-系統提示其他部分 ≈ 5,000 tokens
-基礎佔用 ≈ 45,000 tokens（僅 system prompt）
+### 9.1 always-on 與 optional 邊界
 
-觸發條件：estimated >= 65,536
-→ 整合觸發
-→ pick_consolidation_boundary：找對話歷史的邊界
-→ 但對話歷史是 0（全部已整合）
-→ boundary = None → 直接 return，什麼都沒做
+always-on:
 
-結果：每次對話開始，bot 已使用 45,000 / 65,536 = 69% 的 context window
-      僅剩 20,000 tokens 可用於當前對話
-      整合永遠無法幫助，因為問題來源是 MEMORY.md，不是對話歷史
-```
+- `MEMORY.md` bounded core 注入
+- `HISTORY.md` append-only 寫入
+- consolidation 主流程
 
-### 8.4 無法自救的根因
+optional:
 
-整合機制的設計假設是：**膨脹來自對話歷史，整合可以將其壓縮**。
+- mem0 檢索 (`search`)
+- mem0 索引 (`add`)
 
-但 `MEMORY.md` 膨脹後，整合機制完全無效：
+### 9.2 預設 rollout 策略
 
-| 問題來源 | 整合能否解決 |
-|----------|-------------|
-| 對話歷史過長 | ✅ 可以（移動游標，壓縮歷史） |
-| MEMORY.md 過大 | ❌ 不行（整合只讀 MEMORY.md，從不刪減它） |
+因為 `enabled=false` 是預設值，所以升級後的預設行為是:
 
-`pick_consolidation_boundary` 只掃描 `session.messages`，與 `MEMORY.md` 大小無關。即便整合成功將歷史全部歸檔（`last_consolidated = len(messages)`），system prompt 中的 `MEMORY.md` 仍然原封不動。
+- 不依賴 mem0
+- 先享受 bounded core memory 的 prompt 穩定性
+- 需要時再開啟 mem0 做增強
 
-### 8.5 現有的部分緩解
+### 9.3 與既有資料相容
 
-目前唯一相關的緩解是使用者手動執行 `/new`（清除 session），但這只重置對話歷史，**不清理 `MEMORY.md`**。
+- 舊有 `MEMORY.md` 與 `HISTORY.md` 可直接沿用
+- consolidation 寫檔語義維持一致
+- 未實作自動 migration pipeline，啟用 mem0 後僅對後續 consolidation 進行索引
 
----
+### 9.4 實務調校建議
 
-## 9. HISTORY.md 深度分析
+- 若 prompt 壓力高，先調小 `max_core_chars`
+- 若 relevant memory 噪音高，先調小 `max_mem0_results`
+- 若索引成本高，先調小 `max_mem0_index_chars`
 
-### 9.1 定位與設計意圖
+## 10. 建議除錯與 QA 檢查清單
 
-`HISTORY.md` 是記憶系統的「冷儲存層」，與 `MEMORY.md` 的關係如下：
+以下清單可用於開發驗證與上線前檢查。
 
-| 維度 | MEMORY.md | HISTORY.md |
-|------|-----------|------------|
-| 內容性質 | 結構化長期事實 | 時間序列事件日誌 |
-| 注入方式 | **自動注入** system prompt（每次呼叫） | **不注入**，需 agent 主動讀取 |
-| 寫入方式 | LLM 全量覆寫 | Append-only，永不修改舊內容 |
-| 存取成本 | 高（每次 LLM 呼叫都消耗 token） | 低（靜態，僅工具呼叫時才消耗） |
-| 增長特性 | 緩慢增長（LLM 會合併重複事實） | 持續線性增長，無上限 |
+### 10.1 設定與啟動
 
-### 9.2 寫入路徑
+- [ ] 確認 `agents.defaults.memory.enabled` 預期值
+- [ ] 確認各 char/result 上限有設定
+- [ ] 啟用 mem0 時，`mem0_config` 可成功初始化 client
 
-HISTORY.md 有兩條寫入路徑，對應正常與降級狀態：
+### 10.2 讀取路徑驗證
 
-**路徑一：正常整合（`consolidate()` 成功）**
+- [ ] 一般訊息可看到 core memory 區塊，且不超過 `max_core_chars`
+- [ ] 啟用 mem0 且 query 存在時，能注入 relevant memory
+- [ ] `current_message="[token-probe]"` 時，不做 relevant memory 查詢
 
-```python
-# memory.py:189
-self.append_history(entry)   # entry 來自 LLM 輸出的 history_entry 欄位
-```
+### 10.3 寫入路徑驗證
 
-LLM 在整合時被要求生成：
-```
-"A paragraph summarizing key events/decisions/topics.
- Start with [YYYY-MM-DD HH:MM]. Include detail useful for grep search."
-```
+- [ ] consolidation 成功時 `HISTORY.md` 有新條目
+- [ ] `memory_update` 有變更時才覆寫 `MEMORY.md`
+- [ ] 啟用 mem0 時，`history_entry` 會索引
+- [ ] `memory_update` 未變更時，不索引 memory excerpt
 
-範例輸出：
-```
-[2026-03-18 14:30] User asked to set up Slack integration for workspace foo.
-Discussed OAuth token storage, decided to use environment variables.
-Bot confirmed channel #alerts as notification target.
-```
+### 10.4 失敗與降級驗證
 
-**路徑二：降級歸檔（`_raw_archive()`，連續失敗 ≥ 3 次）**
+- [ ] mem0 初始化失敗時，對話仍能進行
+- [ ] 連續 consolidation 失敗 3 次後，會產生 `[RAW]` 歷史條目
+- [ ] forced tool_choice 不支援時，可 fallback 到 `auto`
 
-```python
-# memory.py:212-216
-ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-self.append_history(
-    f"[{ts}] [RAW] {len(messages)} messages\n"
-    f"{self._format_messages(messages)}"
-)
-```
+### 10.5 回歸重點
 
-`_format_messages` 的輸出格式：
-```
-[2026-03-18 14:30] USER: 請幫我設定 Slack 整合
-[2026-03-18 14:31] ASSISTANT [tools: read_file, write_file]: 好的，我來讀取設定檔...
-[2026-03-18 14:32] ASSISTANT: 已完成設定
-```
-
-`[RAW]` 條目比 LLM 摘要**大數倍**（保留原始對話全文）。
-
-### 9.3 HISTORY.md 不被注入 System Prompt 的設計
-
-`context.py` 的 `build_system_prompt()` 只注入 MEMORY.md：
-
-```python
-# context.py:35-37
-memory = self.memory.get_memory_context()  # 讀 MEMORY.md
-if memory:
-    parts.append(f"# Memory\n\n{memory}")
-# HISTORY.md 完全不出現在這裡
-```
-
-但 `_get_identity()` 在 system prompt 中告知 agent HISTORY.md 的位置和用法：
-
-```python
-# context.py:85-86
-f"- History log: {workspace_path}/memory/HISTORY.md "
-f"(grep-searchable). Each entry starts with [YYYY-MM-DD HH:MM]."
-```
-
-這是「工具導向存取（tool-mediated access）」設計：**agent 被告知 HISTORY.md 的存在，但必須主動呼叫 shell 工具（grep/read）才能取得內容**。這意味著存取是 opt-in 且按需的。
-
-### 9.4 存取模式
-
-Agent 存取 HISTORY.md 的預期方式：
-
-```bash
-# grep 搜尋特定事件
-grep "Slack" /workspace/memory/HISTORY.md
-
-# 查看最近條目
-tail -50 /workspace/memory/HISTORY.md
-
-# 全文讀取（危險，見下節）
-cat /workspace/memory/HISTORY.md
-```
-
-這些操作透過 `shell` 工具執行，結果作為 tool result 回傳給 LLM。
-
-### 9.5 HISTORY.md 的風險分析
-
-#### 風險一：全文讀取爆炸
-
-HISTORY.md 無上限增長。若 agent（或使用者）要求讀取全文：
-
-```
-使用 6 個月後，HISTORY.md = 500,000 tokens
-agent 呼叫 read_file("memory/HISTORY.md")
-→ tool result = 500,000 tokens 的原始文字
-→ 這個 tool result 進入 messages[]
-→ context window 立即爆滿
-```
-
-`_save_turn()` 對 tool result 有 16,000 字元的截斷（`loop.py`），但這只在**儲存到 session 時**生效。LLM 呼叫本身仍會收到完整的 tool result，可能導致 API 錯誤。
-
-#### 風險二：[RAW] 條目加速膨脹
-
-每當 LLM 連續失敗 3 次（網路問題、模型不支援 tool_choice 等），`_raw_archive` 就把原始對話全文 dump 進去。一次 `[RAW]` 條目的大小等於整合 chunk 的原始大小，可能遠超過正常 LLM 摘要。
-
-```
-正常條目：約 100-300 tokens（LLM 摘要段落）
-[RAW] 條目：可能 2,000-10,000 tokens（原始對話全文）
-```
-
-#### 風險三：grep 結果無上限
-
-`grep "常見關鍵字" HISTORY.md` 在大型 HISTORY.md 上可能匹配數百行，返回大量 token。目前沒有 grep 結果大小的限制或截斷。
-
-#### 風險四：無任何清理機制
-
-HISTORY.md 沒有：
-- 自動輪替（log rotation）
-- 大小上限
-- 時間過期清理
-- 壓縮或封存
-
-**HISTORY.md 是永久單向增長的**，唯一清理方式是手動刪除檔案。
-
-### 9.6 與 MEMORY.md 的風險等級比較
-
-| 風險項目 | MEMORY.md | HISTORY.md |
-|----------|-----------|------------|
-| 自動注入 context（每次呼叫） | ✅ 是 → 高風險 | ❌ 否 → 低風險 |
-| 增長速度 | 慢（LLM 合併重複） | 快（無限追加） |
-| 最終大小上限 | 無，但受 LLM 摘要壓制 | 無，且無任何壓制 |
-| 導致對話失效 | **直接**（系統提示膨脹） | **間接**（工具呼叫結果膨脹） |
-| 使用者可見性 | 低（自動發生） | 高（需主動讀取才觸發） |
-
-HISTORY.md 的問題不如 MEMORY.md 緊迫，但長期來看是一個**靜默的資源洩漏**：不會主動傷害對話，但當 agent 試圖回顧歷史時，可能引發 context 爆炸。
-
-### 9.7 HISTORY.md 改進建議
-
-#### 建議一：Log Rotation（低成本）
-
-在 `append_history()` 後檢查檔案大小，超過閾值時封存舊條目：
-```
-HISTORY.md          ← 最近 90 天
-HISTORY.2026-01.md  ← 封存的舊月份
-```
-
-#### 建議二：grep 工具結果截斷（低成本）
-
-對 grep 工具的輸出加入行數/字元上限，避免單次工具呼叫回傳過多 token。
-
-#### 建議三：加入條目計數元數據（低成本）
-
-在 HISTORY.md 頭部維護一個元數據行（條目數、起始日期、最後更新日期），讓 agent 在決定是否讀取前先了解規模。
-
----
-
-## 10. 建議改進方向
-
-以下為開發者可考慮的修復方案，依複雜度排序：
-
-### 方案一：MEMORY.md 大小上限警告（低成本）
-
-在 `get_memory_context()` 或 `build_system_prompt()` 中加入大小檢查，當 `MEMORY.md` 超過閾值時記錄警告或向使用者提示。
-
-### 方案二：MEMORY.md Token 計入整合觸發（中等成本）
-
-目前 `maybe_consolidate_by_tokens` 已透過 `build_messages` 計入 MEMORY.md 的 token，所以估算是正確的。問題在於：整合只能縮減對話歷史，無法縮減 MEMORY.md。
-
-需要新增獨立的「MEMORY.md 自整合」路徑：
-```
-若 MEMORY.md tokens > threshold:
-    呼叫 LLM 執行 compress_memory(current_memory) → 濃縮版 MEMORY.md
-    覆寫 MEMORY.md
-```
-
-### 方案三：MEMORY.md 分層架構（高成本，根本解）
-
-將 MEMORY.md 拆為：
-- `MEMORY_CORE.md`：最重要的常駐事實（大小上限 2,000 tokens）
-- `MEMORY_EXTENDED.md`：完整事實庫（按主題索引，不全量注入 system prompt）
-
-system prompt 只注入 `MEMORY_CORE.md`；agent 需要時透過工具讀取 `MEMORY_EXTENDED.md`。
-
-### 方案四：整合 prompt 截斷 MEMORY.md（低成本，局部緩解）
-
-在 `consolidate()` 的 prompt 中，若 `current_memory` 超過閾值，只傳入最近的 N tokens：
-
-```python
-if len(current_memory) > MAX_MEMORY_IN_PROMPT:
-    current_memory = current_memory[-MAX_MEMORY_IN_PROMPT:]
-```
-
-可減輕場景二（整合加速膨脹），但無法解決場景三（根本失效）。
+- [ ] 沒有任何敘述仍宣稱 `MEMORY.md` 會全文注入
+- [ ] 文件已清楚區分 always-on 與 optional
+- [ ] 文件內容只使用現有程式可驗證的行為

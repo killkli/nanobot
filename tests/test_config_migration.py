@@ -5,6 +5,7 @@ from typer.testing import CliRunner
 
 from nanobot.cli.commands import app
 from nanobot.config.loader import load_config, save_config
+from nanobot.config.schema import Config
 
 runner = CliRunner()
 
@@ -76,7 +77,9 @@ def test_onboard_refresh_rewrites_legacy_config_template(tmp_path, monkeypatch) 
     )
 
     monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: config_path)
-    monkeypatch.setattr("nanobot.cli.commands.get_workspace_path", lambda _workspace=None: workspace)
+    monkeypatch.setattr(
+        "nanobot.cli.commands.get_workspace_path", lambda _workspace=None: workspace
+    )
 
     result = runner.invoke(app, ["onboard"], input="n\n")
 
@@ -109,7 +112,9 @@ def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch)
     )
 
     monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: config_path)
-    monkeypatch.setattr("nanobot.cli.commands.get_workspace_path", lambda _workspace=None: workspace)
+    monkeypatch.setattr(
+        "nanobot.cli.commands.get_workspace_path", lambda _workspace=None: workspace
+    )
     monkeypatch.setattr(
         "nanobot.channels.registry.discover_all",
         lambda: {
@@ -130,3 +135,60 @@ def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch)
     assert result.exit_code == 0
     saved = json.loads(config_path.read_text(encoding="utf-8"))
     assert saved["channels"]["qq"]["msgFormat"] == "plain"
+
+
+def test_save_config_persists_memory_settings_in_camel_case(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.agents.defaults.memory.enabled = True
+    config.agents.defaults.memory.max_core_chars = 123
+    config.agents.defaults.memory.max_mem0_results = 7
+    config.agents.defaults.memory.max_mem0_chars = 456
+    config.agents.defaults.memory.max_mem0_index_chars = 89
+    config.agents.defaults.memory.mem0_config = {"vectorStore": {"provider": "memory"}}
+
+    save_config(config, config_path)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    memory = saved["agents"]["defaults"]["memory"]
+    assert memory == {
+        "enabled": True,
+        "maxCoreChars": 123,
+        "maxMem0Results": 7,
+        "maxMem0Chars": 456,
+        "maxMem0IndexChars": 89,
+        "mem0Config": {"vectorStore": {"provider": "memory"}},
+    }
+
+
+def test_load_config_reads_memory_settings_from_camel_case(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "agents": {
+                    "defaults": {
+                        "memory": {
+                            "enabled": True,
+                            "maxCoreChars": 321,
+                            "maxMem0Results": 6,
+                            "maxMem0Chars": 654,
+                            "maxMem0IndexChars": 98,
+                            "mem0Config": {"llm": {"provider": "openai"}},
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    memory = config.agents.defaults.memory
+    assert memory.enabled is True
+    assert memory.max_core_chars == 321
+    assert memory.max_mem0_results == 6
+    assert memory.max_mem0_chars == 654
+    assert memory.max_mem0_index_chars == 98
+    assert memory.mem0_config == {"llm": {"provider": "openai"}}

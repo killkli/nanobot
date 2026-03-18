@@ -26,6 +26,14 @@
 
     [:octicons-arrow-right-24: 快速開始](quick-start.md)
 
+-   :material-brain:{ .lg .middle } **記憶功能入門**
+
+    ---
+
+    了解記憶預設行為、何時啟用 mem0，以及實用的設定建議。
+
+    [:octicons-arrow-right-24: 記憶功能入門](memory.md)
+
 -   :material-wizard-hat:{ .lg .middle } **Onboarding 精靈**
 
     ---

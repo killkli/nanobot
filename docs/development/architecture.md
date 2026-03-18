@@ -191,10 +191,11 @@ Token 感知的記憶管理系統：
 
 ```
 對話歷史超過上下文視窗
-  → MemoryConsolidator 提取舊對話
-  → 呼叫 LLM 生成摘要
-  → 摘要寫入 memory.md（工作區）
-  → 舊對話從歷史中移除
+  → MemoryConsolidator 提取未整合舊對話
+  → 呼叫 LLM 生成 `history_entry` 與 `memory_update`
+  → `history_entry` append 到 `memory/HISTORY.md`
+  → `memory_update` 視內容是否變更而覆寫 `memory/MEMORY.md`
+  → session 只移動 `last_consolidated` 游標，原始 messages 不會被刪除
 ```
 
 ### 頻道介面卡

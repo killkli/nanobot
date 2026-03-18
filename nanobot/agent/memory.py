@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import weakref
 from datetime import datetime
@@ -14,6 +15,7 @@ from loguru import logger
 from nanobot.utils.helpers import ensure_dir, estimate_message_tokens, estimate_prompt_tokens_chain
 
 if TYPE_CHECKING:
+    from nanobot.config.schema import AgentMemoryConfig
     from nanobot.providers.base import LLMProvider
     from nanobot.session.manager import Session, SessionManager
 
@@ -58,6 +60,7 @@ def _normalize_save_memory_args(args: Any) -> dict[str, Any] | None:
         return args[0] if args and isinstance(args[0], dict) else None
     return args if isinstance(args, dict) else None
 
+
 _TOOL_CHOICE_ERROR_MARKERS = (
     "tool_choice",
     "toolchoice",
@@ -77,11 +80,21 @@ class MemoryStore:
 
     _MAX_FAILURES_BEFORE_RAW_ARCHIVE = 3
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, config: AgentMemoryConfig | None = None):
         self.memory_dir = ensure_dir(workspace / "memory")
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "HISTORY.md"
         self._consecutive_failures = 0
+        self._workspace = workspace.expanduser().resolve()
+        if config is None:
+            from nanobot.config.schema import AgentMemoryConfig
+
+            self.config = AgentMemoryConfig()
+        else:
+            self.config = config
+        self._mem0_client: Any | None = None
+        self._mem0_init_attempted = False
+        self._mem0_user_id = f"workspace:{self._workspace}"
 
     def read_long_term(self) -> str:
         if self.memory_file.exists():
@@ -95,9 +108,142 @@ class MemoryStore:
         with open(self.history_file, "a", encoding="utf-8") as f:
             f.write(entry.rstrip() + "\n\n")
 
-    def get_memory_context(self) -> str:
+    @staticmethod
+    def _truncate_for_prompt(text: str, max_chars: int) -> str:
+        if max_chars <= 0:
+            return ""
+        text = text.strip()
+        if len(text) <= max_chars:
+            return text
+        truncated = text[:max_chars].rstrip()
+        return f"{truncated}\n\n[... truncated ...]"
+
+    @staticmethod
+    def _mem0_result_to_text(item: Any) -> str:
+        if isinstance(item, str):
+            return item.strip()
+        if isinstance(item, dict):
+            for key in ("memory", "text", "content", "fact"):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            return json.dumps(item, ensure_ascii=False)
+        return str(item).strip()
+
+    def _get_mem0_client(self) -> Any | None:
+        if not self.config.enabled:
+            return None
+        if self._mem0_init_attempted:
+            return self._mem0_client
+
+        self._mem0_init_attempted = True
+        try:
+            mem0_module = importlib.import_module("mem0")
+            memory_cls = getattr(mem0_module, "Memory", None)
+            if memory_cls is None:
+                logger.warning("mem0.Memory is unavailable, skipping retrieval/indexing")
+                return None
+        except Exception as exc:
+            logger.warning("mem0 unavailable, skipping retrieval/indexing: {}", exc)
+            return None
+
+        try:
+            self._mem0_client = memory_cls.from_config(self.config.mem0_config)
+        except Exception:
+            logger.exception("Failed to initialize mem0 memory client")
+            self._mem0_client = None
+        return self._mem0_client
+
+    def _build_core_memory_context(self) -> str:
         long_term = self.read_long_term()
-        return f"## Long-term Memory\n{long_term}" if long_term else ""
+        excerpt = self._truncate_for_prompt(long_term, self.config.max_core_chars)
+        return f"## Long-term Memory\n{excerpt}" if excerpt else ""
+
+    def _build_mem0_context(self, query: str | None) -> str:
+        if not self.config.enabled:
+            return ""
+        if not query or not query.strip():
+            return ""
+
+        client = self._get_mem0_client()
+        if client is None:
+            return ""
+
+        try:
+            raw_results = client.search(
+                query=query,
+                user_id=self._mem0_user_id,
+                limit=self.config.max_mem0_results,
+            )
+        except Exception:
+            logger.exception("mem0 search failed")
+            return ""
+
+        if isinstance(raw_results, dict):
+            raw_results = raw_results.get("results", [])
+        if not isinstance(raw_results, list):
+            return ""
+
+        lines: list[str] = []
+        total_chars = 0
+        for item in raw_results[: self.config.max_mem0_results]:
+            text = self._mem0_result_to_text(item)
+            if not text:
+                continue
+            remaining = self.config.max_mem0_chars - total_chars
+            if remaining <= 0:
+                break
+            capped = self._truncate_for_prompt(text, remaining)
+            if not capped:
+                break
+            lines.append(f"- {capped}")
+            total_chars += len(capped)
+            if total_chars >= self.config.max_mem0_chars:
+                break
+
+        if not lines:
+            return ""
+        return "## Relevant Memory\n" + "\n".join(lines)
+
+    def get_memory_context(self, query: str | None = None, include_relevant: bool = True) -> str:
+        parts = []
+        core = self._build_core_memory_context()
+        if core:
+            parts.append(core)
+
+        if include_relevant:
+            relevant = self._build_mem0_context(query)
+            if relevant:
+                parts.append(relevant)
+
+        return "\n\n".join(parts)
+
+    def _index_memories(self, history_entry: str, memory_update_excerpt: str | None) -> None:
+        if not self.config.enabled:
+            return
+        client = self._get_mem0_client()
+        if client is None:
+            return
+
+        try:
+            client.add(
+                history_entry,
+                user_id=self._mem0_user_id,
+                metadata={"source": "history_entry"},
+            )
+        except Exception:
+            logger.exception("mem0 add failed for history entry")
+
+        if not memory_update_excerpt:
+            return
+        try:
+            client.add(
+                memory_update_excerpt,
+                user_id=self._mem0_user_id,
+                metadata={"source": "memory_update_excerpt"},
+            )
+        except Exception:
+            logger.exception("mem0 add failed for memory update excerpt")
 
     @staticmethod
     def _format_messages(messages: list[dict]) -> str:
@@ -105,7 +251,9 @@ class MemoryStore:
         for message in messages:
             if not message.get("content"):
                 continue
-            tools = f" [tools: {', '.join(message['tools_used'])}]" if message.get("tools_used") else ""
+            tools = (
+                f" [tools: {', '.join(message['tools_used'])}]" if message.get("tools_used") else ""
+            )
             lines.append(
                 f"[{message.get('timestamp', '?')[:16]}] {message['role'].upper()}{tools}: {message['content']}"
             )
@@ -131,7 +279,10 @@ class MemoryStore:
 {self._format_messages(messages)}"""
 
         chat_messages = [
-            {"role": "system", "content": "You are a memory consolidation agent. Call the save_memory tool with your consolidation of the conversation."},
+            {
+                "role": "system",
+                "content": "You are a memory consolidation agent. Call the save_memory tool with your consolidation of the conversation.",
+            },
             {"role": "user", "content": prompt},
         ]
 
@@ -144,9 +295,7 @@ class MemoryStore:
                 tool_choice=forced,
             )
 
-            if response.finish_reason == "error" and _is_tool_choice_unsupported(
-                response.content
-            ):
+            if response.finish_reason == "error" and _is_tool_choice_unsupported(response.content):
                 logger.warning("Forced tool_choice unsupported, retrying with auto")
                 response = await provider.chat_with_retry(
                     messages=chat_messages,
@@ -178,7 +327,9 @@ class MemoryStore:
             update = args["memory_update"]
 
             if entry is None or update is None:
-                logger.warning("Memory consolidation: save_memory payload contains null required fields")
+                logger.warning(
+                    "Memory consolidation: save_memory payload contains null required fields"
+                )
                 return self._fail_or_raw_archive(messages)
 
             entry = _ensure_text(entry).strip()
@@ -188,8 +339,14 @@ class MemoryStore:
 
             self.append_history(entry)
             update = _ensure_text(update)
+            memory_changed = update != current_memory
             if update != current_memory:
                 self.write_long_term(update)
+
+            memory_excerpt = None
+            if memory_changed:
+                memory_excerpt = self._truncate_for_prompt(update, self.config.max_mem0_index_chars)
+            self._index_memories(entry, memory_excerpt)
 
             self._consecutive_failures = 0
             logger.info("Memory consolidation done for {} messages", len(messages))
@@ -211,12 +368,9 @@ class MemoryStore:
         """Fallback: dump raw messages to HISTORY.md without LLM summarization."""
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
         self.append_history(
-            f"[{ts}] [RAW] {len(messages)} messages\n"
-            f"{self._format_messages(messages)}"
+            f"[{ts}] [RAW] {len(messages)} messages\n{self._format_messages(messages)}"
         )
-        logger.warning(
-            "Memory consolidation degraded: raw-archived {} messages", len(messages)
-        )
+        logger.warning("Memory consolidation degraded: raw-archived {} messages", len(messages))
 
 
 class MemoryConsolidator:
@@ -226,7 +380,7 @@ class MemoryConsolidator:
 
     def __init__(
         self,
-        workspace: Path,
+        store: MemoryStore,
         provider: LLMProvider,
         model: str,
         sessions: SessionManager,
@@ -234,7 +388,7 @@ class MemoryConsolidator:
         build_messages: Callable[..., list[dict[str, Any]]],
         get_tool_definitions: Callable[[], list[dict[str, Any]]],
     ):
-        self.store = MemoryStore(workspace)
+        self.store = store
         self.provider = provider
         self.model = model
         self.sessions = sessions
@@ -276,7 +430,7 @@ class MemoryConsolidator:
     def estimate_session_prompt_tokens(self, session: Session) -> tuple[int, str]:
         """Estimate current prompt size for the normal session history view."""
         history = session.get_history(max_messages=0)
-        channel, chat_id = (session.key.split(":", 1) if ":" in session.key else (None, None))
+        channel, chat_id = session.key.split(":", 1) if ":" in session.key else (None, None)
         probe_messages = self._build_messages(
             history=history,
             current_message="[token-probe]",
@@ -334,7 +488,7 @@ class MemoryConsolidator:
                     return
 
                 end_idx = boundary[0]
-                chunk = session.messages[session.last_consolidated:end_idx]
+                chunk = session.messages[session.last_consolidated : end_idx]
                 if not chunk:
                     return
 

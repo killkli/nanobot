@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from nanobot.agent.memory import MemoryStore
+from nanobot.config.schema import AgentMemoryConfig
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 
 
@@ -54,6 +55,17 @@ class ScriptedProvider(LLMProvider):
 
     def get_default_model(self) -> str:
         return "test-model"
+
+
+class _FakeMem0:
+    def __init__(self):
+        self.add_calls: list[dict] = []
+
+    def add(self, text: str, user_id: str, metadata: dict | None = None) -> None:
+        self.add_calls.append({"text": text, "user_id": user_id, "metadata": metadata or {}})
+
+    def search(self, query: str, user_id: str):
+        return []
 
 
 class TestMemoryConsolidationTypeHandling:
@@ -118,10 +130,12 @@ class TestMemoryConsolidationTypeHandling:
                 ToolCallRequest(
                     id="call_1",
                     name="save_memory",
-                    arguments=json.dumps({
-                        "history_entry": "[2026-01-01] User discussed testing.",
-                        "memory_update": "# Memory\nUser likes testing.",
-                    }),
+                    arguments=json.dumps(
+                        {
+                            "history_entry": "[2026-01-01] User discussed testing.",
+                            "memory_update": "# Memory\nUser likes testing.",
+                        }
+                    ),
                 )
             ],
         )
@@ -175,10 +189,12 @@ class TestMemoryConsolidationTypeHandling:
                 ToolCallRequest(
                     id="call_1",
                     name="save_memory",
-                    arguments=[{
-                        "history_entry": "[2026-01-01] User discussed testing.",
-                        "memory_update": "# Memory\nUser likes testing.",
-                    }],
+                    arguments=[
+                        {
+                            "history_entry": "[2026-01-01] User discussed testing.",
+                            "memory_update": "# Memory\nUser likes testing.",
+                        }
+                    ],
                 )
             ],
         )
@@ -241,7 +257,9 @@ class TestMemoryConsolidationTypeHandling:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_missing_history_entry_returns_false_without_writing(self, tmp_path: Path) -> None:
+    async def test_missing_history_entry_returns_false_without_writing(
+        self, tmp_path: Path
+    ) -> None:
         """Do not persist partial results when required fields are missing."""
         store = MemoryStore(tmp_path)
         provider = AsyncMock()
@@ -266,7 +284,9 @@ class TestMemoryConsolidationTypeHandling:
         assert not store.memory_file.exists()
 
     @pytest.mark.asyncio
-    async def test_missing_memory_update_returns_false_without_writing(self, tmp_path: Path) -> None:
+    async def test_missing_memory_update_returns_false_without_writing(
+        self, tmp_path: Path
+    ) -> None:
         """Do not append history if memory_update is missing."""
         store = MemoryStore(tmp_path)
         provider = AsyncMock()
@@ -331,13 +351,15 @@ class TestMemoryConsolidationTypeHandling:
     @pytest.mark.asyncio
     async def test_retries_transient_error_then_succeeds(self, tmp_path: Path, monkeypatch) -> None:
         store = MemoryStore(tmp_path)
-        provider = ScriptedProvider([
-            LLMResponse(content="503 server error", finish_reason="error"),
-            _make_tool_response(
-                history_entry="[2026-01-01] User discussed testing.",
-                memory_update="# Memory\nUser likes testing.",
-            ),
-        ])
+        provider = ScriptedProvider(
+            [
+                LLMResponse(content="503 server error", finish_reason="error"),
+                _make_tool_response(
+                    history_entry="[2026-01-01] User discussed testing.",
+                    memory_update="# Memory\nUser likes testing.",
+                ),
+            ]
+        )
         messages = _make_messages(message_count=60)
         delays: list[int] = []
 
@@ -476,3 +498,52 @@ class TestMemoryConsolidationTypeHandling:
         provider.chat_with_retry = AsyncMock(return_value=no_tool)
         assert await store.consolidate(messages, provider, "m") is False
         assert store._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_mem0_indexes_history_always_and_memory_excerpt_when_changed(
+        self, tmp_path: Path
+    ) -> None:
+        config = AgentMemoryConfig(enabled=True, max_mem0_index_chars=12)
+        store = MemoryStore(tmp_path, config=config)
+        fake_mem0 = _FakeMem0()
+        store._mem0_client = fake_mem0
+        store._mem0_init_attempted = True
+
+        provider = AsyncMock()
+        provider.chat_with_retry = AsyncMock(
+            return_value=_make_tool_response(
+                history_entry="[2026-01-01] History entry.",
+                memory_update="# Memory\nabcdefghijklmnopqrstuvwxyz",
+            )
+        )
+
+        result = await store.consolidate(_make_messages(message_count=5), provider, "test-model")
+
+        assert result is True
+        assert len(fake_mem0.add_calls) == 2
+        assert fake_mem0.add_calls[0]["metadata"]["source"] == "history_entry"
+        assert fake_mem0.add_calls[1]["metadata"]["source"] == "memory_update_excerpt"
+        assert "truncated" in fake_mem0.add_calls[1]["text"]
+
+    @pytest.mark.asyncio
+    async def test_mem0_skips_memory_index_when_memory_unchanged(self, tmp_path: Path) -> None:
+        config = AgentMemoryConfig(enabled=True)
+        store = MemoryStore(tmp_path, config=config)
+        store.write_long_term("# Memory\nunchanged")
+        fake_mem0 = _FakeMem0()
+        store._mem0_client = fake_mem0
+        store._mem0_init_attempted = True
+
+        provider = AsyncMock()
+        provider.chat_with_retry = AsyncMock(
+            return_value=_make_tool_response(
+                history_entry="[2026-01-01] only history indexed",
+                memory_update="# Memory\nunchanged",
+            )
+        )
+
+        result = await store.consolidate(_make_messages(message_count=5), provider, "test-model")
+
+        assert result is True
+        assert len(fake_mem0.add_calls) == 1
+        assert fake_mem0.add_calls[0]["metadata"]["source"] == "history_entry"

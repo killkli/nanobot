@@ -222,6 +222,9 @@ nanobot agent
 
 That's it! You have a working AI assistant in 2 minutes.
 
+> [!TIP]
+> Want to understand memory setup and tuning? See the [Memory Guide](./docs/getting-started/memory.md) for user-facing setup, and the [Memory System Developer Guide](./docs/memory-system.md) for internals, config details, and mem0 examples.
+
 ## 💬 Chat Apps
 
 Connect nanobot to your favorite chat platform. Want to build your own? See the [Channel Plugin Guide](./docs/CHANNEL_PLUGIN_GUIDE.md).
