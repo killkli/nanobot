@@ -169,6 +169,8 @@ class MemoryStore:
         if client is None:
             return ""
 
+        logger.debug("Triggering mem0 context retrieval for query: '{}'", query)
+
         try:
             raw_results = client.search(
                 query=query,
@@ -184,12 +186,15 @@ class MemoryStore:
         if not isinstance(raw_results, list):
             return ""
 
+        logger.debug("mem0 context retrieval found {} raw results", len(raw_results))
+
         lines: list[str] = []
         total_chars = 0
         for item in raw_results[: self.config.max_mem0_results]:
             text = self._mem0_result_to_text(item)
             if not text:
                 continue
+            logger.debug("mem0 retrieved item: '{}'", text[:200] if len(text) > 200 else text)
             remaining = self.config.max_mem0_chars - total_chars
             if remaining <= 0:
                 break
@@ -220,28 +225,36 @@ class MemoryStore:
 
     def _index_memories(self, history_entry: str, memory_update_excerpt: str | None) -> None:
         if not self.config.enabled:
+            logger.debug("mem0 indexing skipped: config.enabled is False")
             return
         client = self._get_mem0_client()
         if client is None:
+            logger.debug("mem0 indexing skipped: client is None")
             return
 
+        logger.debug("mem0 indexing: adding history_entry:\n{}", history_entry)
         try:
             client.add(
                 history_entry,
                 user_id=self._mem0_user_id,
                 metadata={"source": "history_entry"},
             )
+            logger.debug("mem0 indexing: successfully added history_entry")
         except Exception:
             logger.exception("mem0 add failed for history entry")
 
         if not memory_update_excerpt:
+            logger.debug("mem0 indexing: memory_update_excerpt is empty, skipping")
             return
+
+        logger.debug("mem0 indexing: adding memory_update_excerpt:\n{}", memory_update_excerpt)
         try:
             client.add(
                 memory_update_excerpt,
                 user_id=self._mem0_user_id,
                 metadata={"source": "memory_update_excerpt"},
             )
+            logger.debug("mem0 indexing: successfully added memory_update_excerpt")
         except Exception:
             logger.exception("mem0 add failed for memory update excerpt")
 
@@ -346,6 +359,7 @@ class MemoryStore:
             memory_excerpt = None
             if memory_changed:
                 memory_excerpt = self._truncate_for_prompt(update, self.config.max_mem0_index_chars)
+            logger.debug("Consolidation triggering mem0 indexing. memory_changed: {}", memory_changed)
             self._index_memories(entry, memory_excerpt)
 
             self._consecutive_failures = 0
