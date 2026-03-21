@@ -8,7 +8,7 @@ import json
 import weakref
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from loguru import logger
 
@@ -75,10 +75,40 @@ def _is_tool_choice_unsupported(content: str | None) -> bool:
     return any(m in text for m in _TOOL_CHOICE_ERROR_MARKERS)
 
 
+class MemoryBackend(Protocol):
+    max_failures_before_raw_archive: int
+
+    def get_memory_context(
+        self, query: str | None = None, include_relevant: bool = True
+    ) -> str: ...
+
+    async def consolidate(
+        self,
+        messages: list[dict],
+        provider: LLMProvider,
+        model: str,
+    ) -> bool: ...
+
+
+def create_memory_backend(
+    workspace: Path,
+    config: AgentMemoryConfig | None = None,
+    adapter: str | None = None,
+) -> MemoryBackend:
+    selected_adapter = (
+        adapter if adapter is not None else (config.adapter if config is not None else None)
+    )
+    adapter_name = (selected_adapter or "builtin").strip().lower()
+    if adapter_name in {"builtin", "memorystore", "memory_store"}:
+        return MemoryStore(workspace, config=config)
+    raise ValueError(f"Unknown memory adapter: {adapter_name}")
+
+
 class MemoryStore:
     """Two-layer memory: MEMORY.md (long-term facts) + HISTORY.md (grep-searchable log)."""
 
     _MAX_FAILURES_BEFORE_RAW_ARCHIVE = 3
+    max_failures_before_raw_archive: int = _MAX_FAILURES_BEFORE_RAW_ARCHIVE
 
     def __init__(self, workspace: Path, config: AgentMemoryConfig | None = None):
         self.memory_dir = ensure_dir(workspace / "memory")
@@ -359,7 +389,9 @@ class MemoryStore:
             memory_excerpt = None
             if memory_changed:
                 memory_excerpt = self._truncate_for_prompt(update, self.config.max_mem0_index_chars)
-            logger.debug("Consolidation triggering mem0 indexing. memory_changed: {}", memory_changed)
+            logger.debug(
+                "Consolidation triggering mem0 indexing. memory_changed: {}", memory_changed
+            )
             self._index_memories(entry, memory_excerpt)
 
             self._consecutive_failures = 0
@@ -394,7 +426,7 @@ class MemoryConsolidator:
 
     def __init__(
         self,
-        store: MemoryStore,
+        store: MemoryBackend,
         provider: LLMProvider,
         model: str,
         sessions: SessionManager,
@@ -462,10 +494,10 @@ class MemoryConsolidator:
         """Archive messages with guaranteed persistence (retries until raw-dump fallback)."""
         if not messages:
             return True
-        for _ in range(self.store._MAX_FAILURES_BEFORE_RAW_ARCHIVE):
+        for _ in range(self.store.max_failures_before_raw_archive):
             if await self.consolidate_messages(messages):
                 return True
-        return True
+        return False
 
     async def maybe_consolidate_by_tokens(self, session: Session) -> None:
         """Loop: archive old messages until prompt fits within half the context window."""

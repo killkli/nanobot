@@ -30,7 +30,9 @@ class ChannelsConfig(Base):
 class AgentMemoryConfig(Base):
     """Agent memory configuration (bounded prompt memory + optional mem0 retrieval)."""
 
+    adapter: str = "builtin"
     enabled: bool = False
+
     max_core_chars: int = 4_000
     max_mem0_results: int = 4
     max_mem0_chars: int = 2_000

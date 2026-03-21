@@ -188,3 +188,49 @@ def test_load_config_reads_memory_settings_from_camel_case(tmp_path) -> None:
     assert memory.max_mem0_chars == 654
     assert memory.max_mem0_index_chars == 98
     assert memory.mem0_config == {"llm": {"provider": "openai"}}
+
+
+def test_save_config_omits_default_memory_adapter(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+
+    save_config(config, config_path)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    memory = saved["agents"]["defaults"]["memory"]
+    assert "adapter" not in memory
+    assert "memoryAdapter" not in memory
+
+
+def test_save_config_persists_non_default_memory_adapter(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.agents.defaults.memory.adapter = "memory_store"
+
+    save_config(config, config_path)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    memory = saved["agents"]["defaults"]["memory"]
+    assert memory["adapter"] == "memory_store"
+
+
+def test_load_config_reads_optional_memory_adapter(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "agents": {
+                    "defaults": {
+                        "memory": {
+                            "adapter": "memory_store",
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.agents.defaults.memory.adapter == "memory_store"

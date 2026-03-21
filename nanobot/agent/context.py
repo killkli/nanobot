@@ -6,7 +6,7 @@ import platform
 from pathlib import Path
 from typing import Any
 
-from nanobot.agent.memory import MemoryStore
+from nanobot.agent.memory import MemoryBackend, create_memory_backend
 from nanobot.agent.skills import SkillsLoader
 from nanobot.utils.helpers import build_assistant_message, current_time_str, detect_image_mime
 
@@ -18,9 +18,9 @@ class ContextBuilder:
     _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
     _TOKEN_PROBE_QUERY = "[token-probe]"
 
-    def __init__(self, workspace: Path, memory_store: MemoryStore | None = None):
+    def __init__(self, workspace: Path, memory_store: MemoryBackend | None = None):
         self.workspace = workspace
-        self.memory = memory_store or MemoryStore(workspace)
+        self.memory = memory_store or create_memory_backend(workspace)
         self.skills = SkillsLoader(workspace)
 
     def build_system_prompt(
@@ -189,8 +189,11 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         return images + [{"type": "text", "text": text}]
 
     def add_tool_result(
-        self, messages: list[dict[str, Any]],
-        tool_call_id: str, tool_name: str, result: Any,
+        self,
+        messages: list[dict[str, Any]],
+        tool_call_id: str,
+        tool_name: str,
+        result: Any,
     ) -> list[dict[str, Any]]:
         """Add a tool result to the message list."""
         messages.append(
