@@ -134,15 +134,28 @@ def _render_interactive_ansi(render_fn) -> str:
     return capture.get()
 
 
-def _print_agent_response(response: str, render_markdown: bool) -> None:
+def _print_agent_response(
+    response: str,
+    render_markdown: bool,
+    metadata: dict | None = None,
+) -> None:
     """Render assistant response with consistent terminal styling."""
     console = _make_console()
     content = response or ""
-    body = Markdown(content) if render_markdown else Text(content)
+    body = _response_renderable(content, render_markdown, metadata)
     console.print()
     console.print(f"[cyan]{__logo__} nanobot[/cyan]")
     console.print(body)
     console.print()
+
+
+def _response_renderable(content: str, render_markdown: bool, metadata: dict | None = None):
+    """Render plain-text command output without markdown collapsing newlines."""
+    if not render_markdown:
+        return Text(content)
+    if (metadata or {}).get("render_as") == "text":
+        return Text(content)
+    return Markdown(content)
 
 
 async def _print_interactive_line(text: str) -> None:
@@ -155,7 +168,11 @@ async def _print_interactive_line(text: str) -> None:
     await run_in_terminal(_write)
 
 
-async def _print_interactive_response(response: str, render_markdown: bool) -> None:
+async def _print_interactive_response(
+    response: str,
+    render_markdown: bool,
+    metadata: dict | None = None,
+) -> None:
     """Print async interactive replies with prompt_toolkit-safe Rich styling."""
 
     def _write() -> None:
@@ -164,7 +181,7 @@ async def _print_interactive_response(response: str, render_markdown: bool) -> N
             lambda c: (
                 c.print(),
                 c.print(f"[cyan]{__logo__} nanobot[/cyan]"),
-                c.print(Markdown(content) if render_markdown else Text(content)),
+                c.print(_response_renderable(content, render_markdown, metadata)),
                 c.print(),
             )
         )
@@ -289,8 +306,12 @@ def onboard(
             config = _apply_workspace_override(load_config(config_path))
         else:
             console.print(f"[yellow]Config already exists at {config_path}[/yellow]")
-            console.print("  [bold]y[/bold] = overwrite with defaults (existing values will be lost)")
-            console.print("  [bold]N[/bold] = refresh config, keeping existing values and adding new fields")
+            console.print(
+                "  [bold]y[/bold] = overwrite with defaults (existing values will be lost)"
+            )
+            console.print(
+                "  [bold]N[/bold] = refresh config, keeping existing values and adding new fields"
+            )
             if typer.confirm("Overwrite?"):
                 config = _apply_workspace_override(Config())
                 save_config(config, config_path)
@@ -298,7 +319,9 @@ def onboard(
             else:
                 config = _apply_workspace_override(load_config(config_path))
                 save_config(config, config_path)
-                console.print(f"[green]✓[/green] Config refreshed at {config_path} (existing values preserved)")
+                console.print(
+                    f"[green]✓[/green] Config refreshed at {config_path} (existing values preserved)"
+                )
     else:
         config = _apply_workspace_override(Config())
         # In wizard mode, don't save yet - the wizard will handle saving if should_save=True
@@ -348,7 +371,9 @@ def onboard(
         console.print(f"  1. Add your API key to [cyan]{config_path}[/cyan]")
         console.print("     Get one at: https://openrouter.ai/keys")
         console.print(f"  2. Chat: [cyan]{agent_cmd}[/cyan]")
-    console.print("\n[dim]Want Telegram/WhatsApp? See: https://github.com/HKUDS/nanobot#-chat-apps[/dim]")
+    console.print(
+        "\n[dim]Want Telegram/WhatsApp? See: https://github.com/HKUDS/nanobot#-chat-apps[/dim]"
+    )
 
 
 def _merge_missing_defaults(existing: Any, defaults: Any) -> Any:
@@ -491,7 +516,6 @@ def _warn_deprecated_config_keys(config_path: Path | None) -> None:
         )
 
 
-
 # ============================================================================
 # Gateway / Server
 # ============================================================================
@@ -569,7 +593,7 @@ def gateway(
         if isinstance(cron_tool, CronTool):
             cron_token = cron_tool.set_cron_context(True)
         try:
-            response = await agent.process_direct(
+            resp = await agent.process_direct(
                 reminder_note,
                 session_key=f"cron:{job.id}",
                 channel=job.payload.channel or "cli",
@@ -578,6 +602,8 @@ def gateway(
         finally:
             if isinstance(cron_tool, CronTool) and cron_token is not None:
                 cron_tool.reset_cron_context(cron_token)
+
+        response = resp.content if resp else ""
 
         message_tool = agent.tools.get("message")
         if isinstance(message_tool, MessageTool) and message_tool._sent_in_turn:
@@ -631,13 +657,14 @@ def gateway(
         async def _silent(*_args, **_kwargs):
             pass
 
-        return await agent.process_direct(
+        resp = await agent.process_direct(
             tasks,
             session_key="heartbeat",
             channel=channel,
             chat_id=chat_id,
             on_progress=_silent,
         )
+        return resp.content if resp else ""
 
     async def on_heartbeat_notify(response: str) -> None:
         """Deliver a heartbeat response to the user's channel."""
@@ -773,10 +800,16 @@ def agent(
             _thinking = _ThinkingSpinner(enabled=not logs)
             with _thinking:
                 response = await agent_loop.process_direct(
-                    message, session_id, on_progress=_cli_progress
+                    message,
+                    session_id,
+                    on_progress=_cli_progress,
                 )
             _thinking = None
-            _print_agent_response(response, render_markdown=markdown)
+            _print_agent_response(
+                response.content if response else "",
+                render_markdown=markdown,
+                metadata=response.metadata if response else None,
+            )
             await agent_loop.close_mcp()
 
         asyncio.run(run_once())
@@ -814,7 +847,7 @@ def agent(
             bus_task = asyncio.create_task(agent_loop.run())
             turn_done = asyncio.Event()
             turn_done.set()
-            turn_response: list[str] = []
+            turn_response: list[tuple[str, dict]] = []
 
             async def _consume_outbound():
                 while True:
@@ -832,10 +865,14 @@ def agent(
 
                         elif not turn_done.is_set():
                             if msg.content:
-                                turn_response.append(msg.content)
+                                turn_response.append((msg.content, dict(msg.metadata or {})))
                             turn_done.set()
                         elif msg.content:
-                            await _print_interactive_response(msg.content, render_markdown=markdown)
+                            await _print_interactive_response(
+                                msg.content,
+                                render_markdown=markdown,
+                                metadata=msg.metadata,
+                            )
 
                     except asyncio.TimeoutError:
                         continue
@@ -877,7 +914,8 @@ def agent(
                         _thinking = None
 
                         if turn_response:
-                            _print_agent_response(turn_response[0], render_markdown=markdown)
+                            content, meta = turn_response[0]
+                            _print_agent_response(content, render_markdown=markdown, metadata=meta)
                     except KeyboardInterrupt:
                         _restore_terminal()
                         console.print("\nGoodbye!")
