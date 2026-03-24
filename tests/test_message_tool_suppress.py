@@ -1,6 +1,7 @@
 """Test message tool suppress logic for final replies."""
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -114,6 +115,64 @@ class TestMessageToolSuppressLogic:
             ("Visible", False),
             ('read_file("foo.txt")', True),
         ]
+
+
+class TestRoutingContextPreservation:
+    @pytest.mark.asyncio
+    async def test_message_tool_uses_inbound_target_context(self, tmp_path: Path) -> None:
+        loop = _make_loop(tmp_path)
+        tool_call = ToolCallRequest(id="call1", name="message", arguments={"content": "Hello"})
+        calls = iter([
+            LLMResponse(content="", tool_calls=[tool_call]),
+            LLMResponse(content="Done", tool_calls=[]),
+        ])
+        loop.provider.chat_with_retry = AsyncMock(side_effect=lambda *a, **kw: next(calls))
+        loop.tools.get_definitions = MagicMock(return_value=[])
+
+        sent: list[OutboundMessage] = []
+        mt = loop.tools.get("message")
+        if isinstance(mt, MessageTool):
+            mt.set_send_callback(AsyncMock(side_effect=lambda m: sent.append(m)))
+
+        msg = InboundMessage(channel="telegram", sender_id="user1", chat_id="chat123", content="Send")
+        result = await loop._process_message(msg)
+
+        assert len(sent) == 1
+        assert sent[0].channel == "telegram"
+        assert sent[0].chat_id == "chat123"
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_spawn_tool_inherits_inbound_target_context(self, tmp_path: Path) -> None:
+        loop = _make_loop(tmp_path)
+        tool_call = ToolCallRequest(
+            id="call1", name="spawn", arguments={"task": "Do work", "label": "bg"}
+        )
+        calls = iter([
+            LLMResponse(content="", tool_calls=[tool_call]),
+            LLMResponse(content="Spawned", tool_calls=[]),
+        ])
+        loop.provider.chat_with_retry = AsyncMock(side_effect=lambda *a, **kw: next(calls))
+        loop.tools.get_definitions = MagicMock(return_value=[])
+
+        spawn_calls: list[dict[str, Any]] = []
+
+        async def fake_spawn(**kwargs: Any) -> str:
+            spawn_calls.append(kwargs)
+            return "Subagent started"
+
+        loop.subagents.spawn = AsyncMock(side_effect=fake_spawn)
+
+        msg = InboundMessage(channel="telegram", sender_id="user1", chat_id="chat123", content="Spawn")
+        result = await loop._process_message(msg)
+
+        assert len(spawn_calls) == 1
+        assert spawn_calls[0]["origin_channel"] == "telegram"
+        assert spawn_calls[0]["origin_chat_id"] == "chat123"
+        assert spawn_calls[0]["session_key"] == "telegram:chat123"
+        assert result is not None
+        assert result.channel == "telegram"
+        assert result.chat_id == "chat123"
 
 
 class TestMessageToolTurnTracking:
