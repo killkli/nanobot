@@ -36,7 +36,7 @@ Visit the DeepSeek Platform (platform.deepseek.com) **API Keys** page to request
 | `deepseek-chat` | DeepSeek V3 general-purpose flagship |
 | `deepseek-reasoner` | DeepSeek R1 reasoning model (similar to o1) |
 
-> **Model detection:** Models containing `deepseek` automatically use this provider. LiteLLM routes them with the `deepseek/` prefix (e.g., `deepseek/deepseek-chat`).
+> **Model detection:** Models containing `deepseek` automatically use this provider.
 
 ---
 
@@ -74,7 +74,7 @@ Request one on the Google AI Studio (aistudio.google.com) **Get API Key** page.
 | `gemini-2.5-pro-preview` | Top Gemini with extremely long context |
 | `gemini-1.5-pro` | Stable flagship with 1M token context |
 
-> **Model detection:** Models containing `gemini` automatically select this provider. LiteLLM prefix is `gemini/`.
+> **Model detection:** Models containing `gemini` automatically select this provider.
 
 ---
 
@@ -112,7 +112,7 @@ Request one at the Zhipu Open Platform (open.bigmodel.cn) **API Keys** page.
 | `glm-z1-flash` | Z1 reasoning fast tier |
 | `glm-z1-air` | Lightweight Z1 reasoning |
 
-> **Model detection:** Names containing `zhipu`, `glm`, or `zai` automatically use this provider. LiteLLM routes them with the `zai/` prefix and sets the `ZHIPUAI_API_KEY` environment variable for compatibility.
+> **Model detection:** Names containing `zhipu`, `glm`, or `zai` automatically use this provider.
 
 ---
 
@@ -152,7 +152,7 @@ Request it through the DashScope or Alibaba BaiLian console’s **API-Key Manage
 | `qwen3-30b-a3b` | Lightweight MoE |
 | `qwen-coder-plus` | Code-specialized |
 
-> **Model detection:** Names containing `qwen` or `dashscope` automatically route here. LiteLLM prefix is `dashscope/`.
+> **Model detection:** Names containing `qwen` or `dashscope` automatically route here.
 
 ---
 
@@ -207,7 +207,7 @@ Request one at the Moonshot Open Platform (platform.moonshot.cn) **API Keys** pa
 
 > **NOTE:** Kimi K2.5 APIs require `temperature >= 1.0`. The registry auto-applies `model_overrides` to set `temperature` to 1.0 when you choose this model.
 
-> **Model detection:** Names with `moonshot` or `kimi` route to this provider. LiteLLM prefix is `moonshot/`.
+> **Model detection:** Names with `moonshot` or `kimi` route to this provider.
 
 ---
 
@@ -243,7 +243,7 @@ Request one at platform.minimaxi.com’s **API Keys** page.
 | `MiniMax-M2.1` | Latest flagship |
 | `MiniMax-Text-01` | General text generation |
 
-> **Model detection:** Names with `minimax` route here. LiteLLM prefix is `minimax/` and the default endpoint is `https://api.minimax.io/v1`.
+> **Model detection:** Names with `minimax` route here. The default endpoint is `https://api.minimax.io/v1`.
 
 ---
 
@@ -282,7 +282,7 @@ Request one at console.mistral.ai **API Keys**.
 | `pixtral-large-latest` | Multimodal version |
 | `mistral-nemo` | Free open-source 12B model |
 
-> **Model detection:** Names containing `mistral` route here. LiteLLM prefix is `mistral/`.
+> **Model detection:** Names containing `mistral` route here.
 
 ---
 
@@ -349,7 +349,7 @@ Request one on the Groq Console (console.groq.com). Free quota is available.
 | `whisper-large-v3-turbo` | Fast and accurate (recommended) |
 | `whisper-large-v3` | Maximum accuracy |
 
-> **Note:** Groq is marked as a secondary provider and only used when explicitly requested. Models containing `groq` route here with the `groq/` prefix.
+> **Note:** Groq is marked as a secondary provider and only used when explicitly requested. Models containing `groq` route here.
 
 ---
 
@@ -523,7 +523,7 @@ BytePlus is the international arm of VolcEngine, hosted in Southeast Asia for gl
 
 ## Azure OpenAI (direct API)
 
-Nanobot can call Azure OpenAI directly using API version 2024-10-21, bypassing LiteLLM (`is_direct=True`).
+Nanobot can call Azure OpenAI directly using API version 2024-10-21.
 
 ### Configuration example
 

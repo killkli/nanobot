@@ -68,6 +68,8 @@ Update `~/.nanobot/config.json` with the following section:
       "allowFrom": ["YOUR_USER_ID"],
       "proxy": null,
       "replyToMessage": false,
+      "reactEmoji": "👍",
+      "streaming": true,
       "groupPolicy": "mention"
     }
   }
@@ -81,6 +83,8 @@ Update `~/.nanobot/config.json` with the following section:
 | `allowFrom` | `[]` | Whitelisted user IDs or usernames |
 | `proxy` | `null` | HTTP/SOCKS proxy (e.g. `"http://127.0.0.1:1080"`) |
 | `replyToMessage` | `false` | Whether replies quote the original message |
+| `reactEmoji` | `null` | Emoji reaction added when a message is received (e.g. `"👍"`, `null` to disable) |
+| `streaming` | `true` | Whether to stream AI responses token-by-token |
 | `groupPolicy` | `"mention"` | How the bot behaves in group chats (see below) |
 
 ### `groupPolicy` explained

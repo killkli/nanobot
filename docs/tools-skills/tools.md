@@ -49,7 +49,8 @@ When `restrict_to_workspace` is enabled, the tool also rejects any commands acce
 ```yaml
 tools:
   exec:
-    timeout: 120          # Default timeout in seconds
+    enable: true          # Global enable/disable for exec tool
+    timeout: 120         # Default timeout in seconds
     path_append: "/usr/local/bin"  # Extra PATH entries
   restrict_to_workspace: false    # Limit all tools to workspace
 ```
@@ -316,6 +317,19 @@ cron(action="add", message="Time to clock off", cron_expr="0 17 * * 1-5", tz="As
 cron(action="list")
 cron(action="remove", job_id="abc123")
 ```
+
+### Run history tracking
+
+Each cron task maintains a run history with the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `run_at_ms` | integer | Unix timestamp (milliseconds) when the run started |
+| `status` | string | Outcome: `success`, `failed`, or `error` |
+| `duration_ms` | integer | How long the run took in milliseconds |
+| `error` | string | Error message if `status` is `failed` or `error` |
+
+History is retained per task and can be inspected to monitor job health over time.
 
 ### Quick reference
 

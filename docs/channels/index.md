@@ -6,7 +6,7 @@
 
 ## Supported Channels
 
-nanobot currently supports the following 12 platforms:
+nanobot currently supports the following 13 platforms:
 
 | Channel | Description | Connection Style |
 |---------|-------------|------------------|
@@ -16,6 +16,7 @@ nanobot currently supports the following 12 platforms:
 | [Feishu / 飞书](feishu.md) | Enterprise messaging with multimodal input | WebSocket Long Connection |
 | [DingTalk / 钉钉](dingtalk.md) | Alibaba enterprise messaging platform | Stream Mode |
 | [WeCom / 企业微信](wecom.md) | Tencent enterprise messaging | WebSocket Long Connection |
+| [Weixin / 微信](weixin.md) | Personal WeChat account via ilinkai API | HTTP Long Polling |
 | [QQ](qq.md) | Official QQ bot platform for private and group chats | WebSocket |
 | [Email](email.md) | IMAP polling + SMTP replies for asynchronous workflows | IMAP Polling |
 | [Matrix](matrix.md) | Decentralized protocol with E2EE support | Matrix Sync |

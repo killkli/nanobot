@@ -9,7 +9,6 @@ This document explains nanobot’s provider mechanism—what a provider is, how 
 A **provider** bridges nanobot with an external large language model (LLM) service. Each provider encapsulates:
 
 - API key and endpoint URL
-- LiteLLM routing prefix (e.g. `deepseek/deepseek-chat`)
 - Model name keywords (used for auto-detection)
 - Whether it is a gateway service or a local deployment
 - Special parameter overrides (for example, Kimi requires `temperature >= 1.0`)
@@ -112,7 +111,7 @@ Official API endpoints from each vendor:
 
 | Provider | Description |
 |----------|-------------|
-| **Azure OpenAI** | Call Azure deployment directly (bypass LiteLLM) |
+| **Azure OpenAI** | Call Azure deployment directly |
 | **Custom** | Any OpenAI-compatible endpoint |
 
 ### Local deployments

@@ -104,6 +104,7 @@ Go to **Version & Release** → create a version → submit for release (enterpr
 | `reactEmoji` | `"THUMBSUP"` | Emoji reaction added when a message is received |
 | `groupPolicy` | `"mention"` | How group messages are handled (see below) |
 | `replyToMessage` | `false` | Whether replies quote the original message |
+| `threading` | `false` | Whether to use thread-based replies in group chats |
 
 ### `groupPolicy` explanation
 
@@ -113,6 +114,26 @@ Go to **Version & Release** → create a version → submit for release (enterpr
 | `"open"` | Respond to every message in a group |
 
 Private chats always respond regardless of `groupPolicy`.
+
+### Thread reply support
+
+When `threading` is set to `true`, nanobot replies in Feishu message threads instead of sending top-level replies. This keeps conversation context organized in group chats.
+
+```json
+{
+  "channels": {
+    "feishu": {
+      "enabled": true,
+      "appId": "cli_xxx",
+      "appSecret": "YOUR_APP_SECRET",
+      "threading": true
+    }
+  }
+}
+```
+
+!!! tip "Threading vs. replyToMessage"
+    `threading` uses Feishu's native thread reply feature to group related messages, while `replyToMessage` quotes the original message in the reply text. Both can be used together.
 
 ---
 

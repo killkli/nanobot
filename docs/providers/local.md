@@ -113,7 +113,7 @@ Nanobot recognizes Ollama when:
 2. Model names include `ollama` or `nemotron`
 3. `provider: "ollama"` is explicitly set
 
-LiteLLM automatically handles the `ollama_chat/` prefix (e.g., `ollama_chat/llama3.2`).
+The Ollama API uses the `ollama_chat/` prefix internally.
 
 ---
 
@@ -193,7 +193,7 @@ Use whatever you started the server with:
 }
 ```
 
-> **Detection logic:** When the provider key is `vllm`, nanobot routes through `hosted_vllm/` LiteLLM prefix. vLLM does not set a `default_api_base`, so you must specify the server address explicitly.
+> **Detection logic:** When the provider key is `vllm`, nanobot uses the vLLM endpoint directly. vLLM does not set a `default_api_base`, so you must specify the server address explicitly.
 
 ---
 
@@ -204,10 +204,10 @@ The `custom` provider works with any OpenAI-compatible API endpoint (LM Studio, 
 ### When to use custom
 
 - Your service isn’t one of the built-in providers
-- You need to call a specific HTTP endpoint without LiteLLM routing
+- You need to call a specific HTTP endpoint directly
 - You have custom authentication headers
 
-> The `custom` provider sets `is_direct=True`, bypassing LiteLLM and calling the OpenAI SDK directly. This maximizes compatibility but skips features like automatic retries or fallback routing.
+> The `custom` provider calls the OpenAI-compatible endpoint directly. This maximizes compatibility but skips features like automatic retries or fallback routing.
 
 ### Configuration examples
 

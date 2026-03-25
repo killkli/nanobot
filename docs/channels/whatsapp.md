@@ -63,7 +63,8 @@ Once linked, the bridge stores its session information, so you do not need to re
       "enabled": true,
       "bridgeUrl": "ws://localhost:3001",
       "bridgeToken": "",
-      "allowFrom": ["+886912345678"]
+      "allowFrom": ["+886912345678"],
+      "groupPolicy": "mention"
     }
   }
 }
@@ -74,7 +75,15 @@ Once linked, the bridge stores its session information, so you do not need to re
 | `enabled` | `false` | Whether to enable this channel |
 | `bridgeUrl` | `"ws://localhost:3001"` | WebSocket URL of the Node.js bridge |
 | `bridgeToken` | `""` | Optional bridge auth token (not required by default) |
-| `allowFrom` | `[]` | List of allowed WhatsApp numbers (include country code, e.g. `+886912345678`)
+| `allowFrom` | `[]` | List of allowed WhatsApp numbers (include country code, e.g. `+886912345678`) |
+| `groupPolicy` | `"mention"` | How the bot behaves in group chats (see below) |
+
+### `groupPolicy` explanation
+
+| Value | Behavior |
+|-------|----------|
+| `"mention"` (default) | Respond only when mentioned in a group |
+| `"open"` | Respond to all messages in a group |
 
 ---
 
