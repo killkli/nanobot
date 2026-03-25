@@ -9,7 +9,6 @@
 **提供商（Provider）** 是 nanobot 與各家大型語言模型（LLM）服務之間的橋接層。每個提供商封裝了以下資訊：
 
 - API 金鑰與端點 URL
-- LiteLLM 路由前綴（例如 `deepseek/deepseek-chat`）
 - 模型名稱關鍵字（用於自動偵測）
 - 是否為閘道（Gateway）或本地部署
 - 特殊參數覆寫（例如 Kimi 要求 temperature >= 1.0）
@@ -68,7 +67,7 @@ nanobot 使用三層優先順序來偵測應使用哪個提供商：
 
 ## 支援的提供商列表
 
-nanobot 支援 28+ 個提供商，依類型分為以下幾類：
+nanobot 支援 24 個提供商，依類型分為以下幾類：
 
 ### 閘道型（Gateway）— 可路由任意模型
 
@@ -112,8 +111,9 @@ nanobot 支援 28+ 個提供商，依類型分為以下幾類：
 
 | 提供商 | 說明 |
 |-------|------|
-| **Azure OpenAI** | 直接呼叫 Azure 部署，不經 LiteLLM |
-| **Custom（自訂）** | 任何 OpenAI 相容端點 |
+| **Azure OpenAI** | 直接呼叫 Azure 部署，使用原生 OpenAI SDK |
+| **OpenVINO Model Server** | Intel OpenVINO Model Server（`/v3` 端點），自帶預設 `api_base` |
+| **Custom（自訂）** | 任何 OpenAI 相容端點（需手動指定 `api_base`） |
 
 ### 本地部署
 
@@ -121,6 +121,7 @@ nanobot 支援 28+ 個提供商，依類型分為以下幾類：
 |-------|------|
 | **Ollama** | 在 localhost:11434 自動偵測 |
 | **vLLM** | 任何 OpenAI 相容本地伺服器 |
+| **OpenVINO Model Server** | Intel OpenVINO Model Server（`/v3` 端點） |
 
 ---
 

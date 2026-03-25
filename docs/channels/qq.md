@@ -122,6 +122,54 @@ nanobot gateway
 
 ---
 
+## 檔案與媒體處理
+
+### 接收附件（Inbound）
+
+當使用者發送圖片、影片、音頻或一般檔案時，nanobot 會自動下載至媒體目錄，並在訊息內容中附上「Received files:」清單，列出各檔案的路徑。
+
+下載採用分塊流式寫入，記憶體安全。大檔案也能正常處理，不會占用大量記憶體。
+
+### 傳送媒體（Outbound）
+
+在 `OutboundMessage` 中使用 `media` 參數即可傳送圖片或檔案：
+
+```python
+OutboundMessage(text="這是一張圖片", media="/path/to/image.png")
+OutboundMessage(text="一份文件", media="file:///path/to/document.pdf")
+OutboundMessage(text="網頁圖片", media="https://example.com/photo.jpg")
+```
+
+`media` 支援三種路徑格式：
+- **本地路徑**：如 `/Users/me/photo.png`
+- **file:// URI**：如 `file:///Users/me/photo.png`
+- **HTTP(S) URL**：如 `https://example.com/image.jpg`
+
+傳送時，系統會先將媒體上傳至 QQ 開放平台，再夾帶 `msg_type=7` 的 rich media 訊息發送，最後再發送文字內容。
+
+### 支援的檔案類型
+
+QQ 對音頻/影片格式有限制，因此採用以下分類：
+
+| 分類 | QQ 類型代碼 | 支援副檔名 |
+|------|-------------|------------|
+| 圖片 | `1` (IMAGE) | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`, `.tif`, `.tiff`, `.ico`, `.svg` |
+| 一般檔案 | `4` (FILE) | 所有其他副檔名（當作一般檔案傳送） |
+
+音頻與影片檔案目前僅能以一般檔案形式傳送。
+
+### 回覆附件
+
+在 `OutboundMessage` 中使用 `attachments` 欄位即可附加本地檔案至回覆：
+
+```python
+OutboundMessage(text="這是回覆", attachments=["/path/to/file.pdf"])
+```
+
+不同版本的 botpy 使用的附件欄位名稱不同，系統會自動嘗試多個候選欄位名稱（`attachment`、`attachments`、`file`、`files`），無需特別設定。
+
+---
+
 ## 正式發佈流程
 
 沙盒測試完成後：

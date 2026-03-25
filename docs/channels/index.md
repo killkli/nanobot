@@ -6,7 +6,7 @@
 
 ## 支援的頻道清單
 
-nanobot 目前支援以下 12 個平台：
+nanobot 目前支援以下 13 個平台：
 
 | 頻道 | 說明 | 連線方式 |
 |------|------|----------|
@@ -15,6 +15,7 @@ nanobot 目前支援以下 12 個平台：
 | [Slack](slack.md) | 企業即時通訊，支援 Thread 回覆 | Socket Mode |
 | [Feishu / 飛書](feishu.md) | 飛書企業通訊，支援多模態輸入 | WebSocket 長連線 |
 | [DingTalk / 釘釘](dingtalk.md) | 阿里巴巴企業通訊 | Stream Mode |
+| [WeChat / 微信](weixin.md) | 個人微信帳號，HTTP Long Polling | Long Polling |
 | [WeCom / 企業微信](wecom.md) | 騰訊企業通訊平台 | WebSocket 長連線 |
 | [QQ](qq.md) | QQ 官方 Bot 平台，支援私聊與群組 | WebSocket |
 | [Email](email.md) | IMAP 收信 + SMTP 回信，適合非同步場景 | IMAP Polling |
