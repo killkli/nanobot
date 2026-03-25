@@ -18,8 +18,14 @@ class ContextBuilder:
     _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
     _TOKEN_PROBE_QUERY = "[token-probe]"
 
-    def __init__(self, workspace: Path, memory_store: MemoryBackend | None = None):
+    def __init__(
+        self,
+        workspace: Path,
+        memory_store: MemoryBackend | None = None,
+        timezone: str | None = None,
+    ):
         self.workspace = workspace
+        self.timezone = timezone
         self.memory = memory_store or create_memory_backend(workspace)
         self.skills = SkillsLoader(workspace)
 
@@ -107,9 +113,11 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
 IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST call the 'message' tool with the 'media' parameter. Do NOT use read_file to "send" a file — reading a file only shows its content to you, it does NOT deliver the file to the user. Example: message(content="Here is the file", media=["/path/to/file.png"])"""
 
     @staticmethod
-    def _build_runtime_context(channel: str | None, chat_id: str | None) -> str:
+    def _build_runtime_context(
+        channel: str | None, chat_id: str | None, timezone: str | None = None,
+    ) -> str:
         """Build untrusted runtime metadata block for injection before the user message."""
-        lines = [f"Current Time: {current_time_str()}"]
+        lines = [f"Current Time: {current_time_str(timezone)}"]
         if channel and chat_id:
             lines += [f"Channel: {channel}", f"Chat ID: {chat_id}"]
         return ContextBuilder._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
@@ -137,7 +145,7 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
         current_role: str = "user",
     ) -> list[dict[str, Any]]:
         """Build the complete message list for an LLM call."""
-        runtime_ctx = self._build_runtime_context(channel, chat_id)
+        runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone)
         user_content = self._build_user_content(current_message, media)
         is_token_probe = current_message == self._TOKEN_PROBE_QUERY
 

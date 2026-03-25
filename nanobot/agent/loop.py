@@ -71,8 +71,9 @@ class AgentLoop:
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
         memory_config: AgentMemoryConfig | None = None,
+        timezone: str | None = None,
     ):
-        from nanobot.config.schema import AgentMemoryConfig, ExecToolConfig, WebSearchConfig
+        from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
         self.bus = bus
         self.channels_config = channels_config
@@ -90,8 +91,12 @@ class AgentLoop:
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
 
-        self.memory_store = create_memory_backend(workspace, config=self.memory_config)
-        self.context = ContextBuilder(workspace, memory_store=self.memory_store)
+        self.memory_store = create_memory_backend(workspace, config=memory_config)
+        self.context = ContextBuilder(
+            workspace,
+            memory_store=self.memory_store,
+            timezone=timezone,
+        )
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -157,7 +162,9 @@ class AgentLoop:
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
         self.tools.register(SpawnTool(manager=self.subagents))
         if self.cron_service:
-            self.tools.register(CronTool(self.cron_service))
+            self.tools.register(
+                CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
+            )
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
