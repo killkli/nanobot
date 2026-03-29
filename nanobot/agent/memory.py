@@ -513,7 +513,7 @@ class MemoryConsolidator:
                     break
 
                 logger.info(
-                    "Token trim (fast) round {} for {}: {}/{} via {}, chunk={} msgs — deferring LLM consolidation",
+                    "Token consolidation round {} for {}: {}/{} via {}, chunk={} msgs",
                     round_num,
                     session.key,
                     estimated,
@@ -521,14 +521,15 @@ class MemoryConsolidator:
                     source,
                     len(chunk),
                 )
-                chunks.append(list(chunk))
+                chunks.append(chunk)
                 session.last_consolidated = end_idx
-                self.sessions.save(session)
 
                 estimated, source = self.estimate_session_prompt_tokens(session)
                 if estimated <= 0:
                     break
 
+            if chunks:
+                self.sessions.save(session)
             return chunks
 
     def estimate_session_prompt_tokens(self, session: Session) -> tuple[int, str]:

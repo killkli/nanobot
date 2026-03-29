@@ -55,8 +55,6 @@ async def test_prompt_above_threshold_triggers_consolidation(tmp_path, monkeypat
 
     await loop.process_direct("hello", session_key="cli:test")
 
-    # trim_for_budget advances last_consolidated immediately (fast path);
-    # the actual LLM consolidation is deferred to background.
     assert session.last_consolidated > 0
 
 
