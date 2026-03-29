@@ -17,7 +17,7 @@ This document provides complete coverage of all nanobot command-line commands.
 | `nanobot gateway` | Start Gateway service (connects chat channels) |
 | `nanobot gateway --port <port>` | Start Gateway on a specified port |
 | `nanobot status` | Show configuration and connection status |
-| `nanobot channels login` | WhatsApp QR Code login |
+| `nanobot channels login <channel>` | Authenticate a channel interactively (for example `weixin`, `whatsapp`) |
 | `nanobot channels status` | Show connection status of each channel |
 | `nanobot plugins list` | List all installed channel plugins |
 | `nanobot provider login <provider>` | OAuth login (`openai-codex`, `github-copilot`) |
@@ -249,25 +249,46 @@ Subcommand group for managing chat channel connections.
 #### nanobot channels login
 
 ```
-nanobot channels login
+nanobot channels login CHANNEL_NAME [--force]
 ```
 
-Log in to WhatsApp by scanning a QR Code. Run this command for first-time use or re-authorization.
+Authenticate a channel through its interactive login flow. This currently covers channels such as Weixin and WhatsApp.
 
-If Node.js bridge is not installed, this command will download and build it automatically.
+Behavior depends on the selected channel:
 
-**Requirements:**
-- Node.js >= 18
-- npm
+- `weixin` opens the WeChat QR-code login flow
+- `whatsapp` prepares the local bridge if needed, then starts WhatsApp QR login
+
+**Arguments:**
+
+| Argument | Description |
+|------|------|
+| `CHANNEL_NAME` | Built-in or plugin channel name (for example `weixin`, `whatsapp`) |
+
+**Options:**
+
+| Option | Description |
+|------|------|
+| `--force`, `-f` | Force re-authentication even if a saved login already exists |
+
+**Channel-specific requirements:**
+- WhatsApp: Node.js >= 18 and npm
+- Weixin: a personal WeChat account that can scan the QR code
 
 **Examples:**
 
 ```bash
-# First-time WhatsApp login
-nanobot channels login
+# First-time Weixin login
+nanobot channels login weixin
 
-# Rebuild bridge and login again (after upgrade)
-rm -rf ~/.nanobot/bridge && nanobot channels login
+# Re-authenticate Weixin
+nanobot channels login weixin --force
+
+# First-time WhatsApp login
+nanobot channels login whatsapp
+
+# Rebuild bridge and login again after an upgrade
+rm -rf ~/.nanobot/bridge && nanobot channels login whatsapp
 ```
 
 ---

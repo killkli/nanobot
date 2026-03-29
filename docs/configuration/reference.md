@@ -55,7 +55,7 @@ Model strings depend on the provider:
 
 | Format | Example | Use case |
 |------|------|----------|
-| `provider/model` | `anthropic/claude-opus-4-5` | Standard LiteLLM syntax |
+| `provider/model` | `anthropic/claude-opus-4-5` | Standard nanobot provider/model syntax |
 | `model-only` | `llama3.2` | Local models (Ollama) |
 | Deployment name | `my-gpt4-deployment` | Azure OpenAI deployments |
 
@@ -145,7 +145,7 @@ Root node for LLM providers. Each provider key maps to an object with `api_key`,
 
 | Provider key | Description | Get API key |
 |----------|------|--------------|
-| `custom` | Any OpenAI-compatible endpoint (direct, bypassing LiteLLM) | — |
+| `custom` | Any OpenAI-compatible endpoint (direct, without gateway auto-detection) | — |
 | `anthropic` | Claude models (direct) | [console.anthropic.com](https://console.anthropic.com) |
 | `openai` | GPT models (direct) | [platform.openai.com](https://platform.openai.com) |
 | `openrouter` | Unified gateway covering 300+ models (recommended) | [openrouter.ai](https://openrouter.ai) |

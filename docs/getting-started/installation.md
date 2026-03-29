@@ -193,7 +193,7 @@ nanobot --version
 Expected output example:
 
 ```
-nanobot 0.1.4.post5
+nanobot 0.1.4.post6
 ```
 
 Then try checking status:

@@ -119,6 +119,7 @@ nav:
       - Feishu: channels/feishu.md
       - DingTalk: channels/dingtalk.md
       - WeCom: channels/wecom.md
+      - Weixin / WeChat: channels/weixin.md
       - QQ: channels/qq.md
       - Email: channels/email.md
       - Matrix: channels/matrix.md
@@ -131,6 +132,7 @@ nav:
       - OpenAI: providers/openai.md
       - Other Providers: providers/others.md
       - Local Models: providers/local.md
+      - OpenVINO Model Server: providers/openvino.md
   - Configuration Reference:
       - configuration/index.md
       - Full Configuration Reference: configuration/reference.md
@@ -150,4 +152,6 @@ nav:
       - Architecture: development/architecture.md
       - Contributing Guide: development/contributing.md
       - Channel Plugin Development: development/channel-plugin.md
+  - Release Notes:
+      - v0.1.4.post6: news/0.1.4.post6.md
   - CLI Reference: cli-reference.md

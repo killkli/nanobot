@@ -183,7 +183,7 @@ async def test_channel_receives_message():
 from unittest.mock import AsyncMock, patch
 
 async def test_llm_call():
-    with patch("nanobot.providers.litellm_provider.LiteLLMProvider.chat") as mock_chat:
+    with patch("nanobot.providers.openai_compat_provider.OpenAICompatProvider.chat") as mock_chat:
         mock_chat.return_value = AsyncMock(return_value="mock response")
         # Exercise
         ...

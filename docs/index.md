@@ -10,7 +10,7 @@ hide:
   <p class="hero-subtitle">An ultra-lightweight personal AI assistant framework with support for 16+ chat platforms, 28+ LLM providers, and full MCP integration</p>
   <div class="hero-badges">
     <span class="hero-badge">🐍 Python ≥ 3.11</span>
-    <span class="hero-badge">📦 v0.1.4.post5</span>
+    <span class="hero-badge">📦 v0.1.4.post6</span>
     <span class="hero-badge">⚖️ MIT License</span>
     <span class="hero-badge">⚡ ~16k lines of code</span>
     <span class="hero-badge">🔌 16+ platforms</span>
@@ -23,8 +23,8 @@ hide:
 </div>
 
 <div class="announcement-banner">
-  🎉 <strong>Latest release v0.1.4.post5</strong> is now available! Improved reliability, stronger channel support, and a better day-to-day experience.
-  <a href="https://github.com/HKUDS/nanobot/releases/tag/v0.1.4.post5">View release notes →</a>
+  🎉 <strong>Latest release v0.1.4.post6</strong> is now available! Architecture decoupling, litellm removal, end-to-end streaming, WeChat support, and a security fix are now included.
+  <a href="news/0.1.4.post6/">Read docs release notes →</a>
 </div>
 
 ---
@@ -289,32 +289,33 @@ graph TD
 
 <ul class="news-timeline">
   <li class="news-item">
-    <div class="news-date">2026-03-16</div>
-    <div class="news-text">🚀 Released <strong>v0.1.4.post5</strong> — improved reliability, stronger channel support, and a more dependable day-to-day experience</div>
+    <div class="news-date">2026-03-27</div>
+    <div class="news-text">🚀 Released <strong>v0.1.4.post6</strong> — architecture decoupling, litellm removal, end-to-end streaming, WeChat channel, and a security fix</div>
   </li>
   <li class="news-item">
-    <div class="news-date">2026-03-15</div>
-    <div class="news-text">🧩 DingTalk rich media, smarter built-in skills, and cleaner model compatibility</div>
+    <div class="news-date">2026-03-26</div>
+    <div class="news-text">🏗️ Agent runner extracted and lifecycle hooks unified; stream delta coalescing at boundaries</div>
   </li>
   <li class="news-item">
-    <div class="news-date">2026-03-14</div>
-    <div class="news-text">💬 Channel plugins, Feishu replies, steadier MCP, QQ, and media handling</div>
+    <div class="news-date">2026-03-25</div>
+    <div class="news-text">🌏 Step Fun provider, configurable timezone, and Gemini thought signatures</div>
   </li>
   <li class="news-item">
-    <div class="news-date">2026-03-13</div>
-    <div class="news-text">🌐 Multi-provider web search, LangSmith integration, and broader reliability improvements</div>
+    <div class="news-date">2026-03-24</div>
+    <div class="news-text">🔧 WeChat compatibility, Feishu CardKit streaming, and a restructured test suite</div>
   </li>
   <li class="news-item">
-    <div class="news-date">2026-03-08</div>
-    <div class="news-text">🚀 Released <strong>v0.1.4.post4</strong> — safer defaults and better multi-instance support</div>
+    <div class="news-date">2026-03-23</div>
+    <div class="news-text">🔧 Command routing refactored for plugins, WhatsApp/WeChat media, and unified channel login CLI</div>
   </li>
   <li class="news-item">
-    <div class="news-date">2026-02-17</div>
-    <div class="news-text">🎉 Released <strong>v0.1.4</strong> — MCP support, progress streaming, new providers, and multiple channel improvements</div>
+    <div class="news-date">2026-03-22</div>
+    <div class="news-text">⚡ End-to-end streaming, WeChat channel, Anthropic cache optimization, and the <code>/status</code> command</div>
   </li>
 </ul>
 
 <div style="text-align:center; margin-top: 1rem;">
+  <a href="news/0.1.4.post6/" style="font-size:0.9rem; color: var(--md-primary-fg-color); margin-right: 1rem;">Read v0.1.4.post6 release notes →</a>
   <a href="https://github.com/HKUDS/nanobot/releases" style="font-size:0.9rem; color: var(--md-primary-fg-color);">View full release history →</a>
 </div>
 

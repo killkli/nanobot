@@ -33,8 +33,8 @@ flowchart TD
     end
 
     subgraph LLM providers
-        LITELLM[LiteLLM Provider]
-        OPENAI[OpenAI Compatible]
+        ANTHROPIC[Anthropic Provider]
+        OPENAI[OpenAI-compatible Provider]
         CUSTOM[Custom providers]
     end
 
@@ -52,7 +52,7 @@ flowchart TD
     LOOP --> CTX
     LOOP --> MEM
     LOOP --> SESS
-    LOOP --> LITELLM & OPENAI & CUSTOM
+    LOOP --> ANTHROPIC & OPENAI & CUSTOM
     LOOP --> SHELL & WEB & FS & MCP & CRON & SPAWN
     LOOP --> BUS
     BUS --> TG & DC & SL & FL & OT
@@ -233,12 +233,14 @@ A unified abstraction layer for LLM calls:
 
 ```
 providers/
-├── base.py              # LLMProvider base class
-├── litellm_provider.py  # Primary provider using LiteLLM for 100+ models
-└── ...                  # Custom providers as needed
+├── base.py                    # LLMProvider base class
+├── anthropic_provider.py      # Native Anthropic SDK integration
+├── openai_compat_provider.py  # OpenAI-compatible provider for OpenAI, OpenRouter, Gemini, DeepSeek, Qwen, VolcEngine, and more
+├── azure_openai_provider.py   # Azure OpenAI provider
+└── ...                        # OAuth and other provider-specific integrations
 ```
 
-`LiteLLMProvider` covers Anthropic Claude, OpenAI GPT, Google Gemini, DeepSeek, Qwen, VolcEngine, and all LiteLLM-supported models.
+Nanobot now uses native provider implementations instead of LiteLLM. Anthropic runs through `anthropic_provider.py`, while OpenAI-compatible services share `openai_compat_provider.py` with registry-driven routing.
 
 ### Tool execution
 
